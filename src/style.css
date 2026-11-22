@@ -165,6 +165,11 @@ body.kb .writebar { padding-bottom: 8px; }
 /* сообщение: без выделения текста при долгом нажатии (копирование — через меню) */
 .bubble[data-id] { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; transition: background .3s; }
 .bubble.flash { background: #fff3c4; }
+.bubble[data-id] { transition: background .3s, transform .2s; position: relative; }
+.bubble.swipe-ready::before { content: '↩'; position: absolute; left: -30px; top: 50%; transform: translateY(-50%);
+  color: var(--accent); font-size: 18px; }
+.bubble a { color: var(--accent-dark); text-decoration: underline; word-break: break-all; }
+.hbtn.spin svg { animation: spin .5s linear infinite; }
 .quote { border-left: 3px solid var(--accent-light); background: rgba(0,0,0,.04); border-radius: 4px; padding: 3px 8px; margin: 2px 0 4px;
   font-size: 13px; cursor: pointer; }
 .quote b { display: block; font-size: 12px; color: var(--accent-dark); }

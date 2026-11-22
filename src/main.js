@@ -44,8 +44,11 @@ function body(ev) {
   if (ev.getType() === 'm.room.encrypted') return '<i class="muted">Расшифровка…</i>';
   const c = ev.getContent();
   if (c.msgtype === 'm.image') return '<i class="muted">[фото — будет в следующей версии]</i>';
-  return esc(stripReply(c.body));
+  return linkify(esc(stripReply(c.body)));
 }
+// ссылки кликабельны (без превью: в зашифрованных чатах превью выключены ради приватности)
+const linkify = (html) => html.replace(/\bhttps?:\/\/[^\s<]+[^\s<.,:;!?)"'»]/g,
+  (u) => `<a href="${u}" target="_blank" rel="noopener noreferrer">${u}</a>`);
 // старые клиенты добавляют к ответу цитату строками «> …» — убираем её, цитату рисуем сами
 function stripReply(s) {
   if (!s?.startsWith('> ')) return s;
@@ -401,7 +404,8 @@ const views = {
         const tick = !mine || st === 'not_sent' ? ''
           : st ? `<i class="tick">${ICON_CLOCK}</i>`
           : room.getUsersReadUpTo(ev).some((u) => u !== me) ? '<i class="tick read">✓✓</i>' : '<i class="tick">✓</i>';
-        const replyId = ev.getContent()['m.relates_to']?.['m.in_reply_to']?.event_id;
+        // в зашифрованных чатах ссылка на ответ лежит в незашифрованной «обёртке» события
+        const replyId = ev.replyEventId || ev.getContent()['m.relates_to']?.['m.in_reply_to']?.event_id;
         const q = replyId && room.findEventById(replyId);
         const quote = replyId ? `<div class="quote" data-act="jump" data-id="${esc(replyId)}"><b>${q ? esc(sender(q)) : 'Сообщение'}</b><span>${q ? esc(plain(q)) : '…'}</span></div>` : '';
         const rx = reacts[ev.getId()];
@@ -557,14 +561,7 @@ const actions = {
   },
   // меню сообщения
   closesheet: () => closeSheet(),
-  reply: (el) => {
-    closeSheet();
-    const ev = findEv(el.dataset.id);
-    if (!ev) return;
-    replyTo = { id: ev.getId(), name: sender(ev), text: plain(ev) };
-    showReply();
-    document.querySelector('.writebar input')?.focus();
-  },
+  reply: (el) => { closeSheet(); startReply(el.dataset.id); },
   cancelreply: () => { replyTo = null; showReply(); },
   copy: (el) => {
     closeSheet();
@@ -585,7 +582,11 @@ const actions = {
   },
   join: async (el) => { await client.joinRoom(el.dataset.id); await joinSpaceRooms(client); },
   leave: (el) => client.leave(el.dataset.id),
-  reload: () => hardReload(),
+  reload: async (el) => {
+    el.classList.add('spin');
+    await softRefresh();
+    setTimeout(() => el.classList.remove('spin'), 400);
+  },
   radio: (el) => playStation(+el.dataset.id),
   radiotoggle: () => playStation(station),
   radiostop: () => { audio.pause(); audio.removeAttribute('src'); station = null; updatePlayer(); },
@@ -665,6 +666,13 @@ document.addEventListener('submit', async (e) => {
 let replyTo = null;
 const QUICK = ['❤️', '👍', '😂', '😮', '😢', '🙏'];
 const findEv = (id) => client.getRoom(view_arg())?.findEventById(id);
+function startReply(id) {
+  const ev = findEv(id);
+  if (!ev || ev.status) return;
+  replyTo = { id: ev.getId(), name: sender(ev), text: plain(ev) };
+  showReply();
+  document.querySelector('.writebar input')?.focus();
+}
 function showReply() {
   const rb = document.getElementById('replybar');
   if (!rb) return;
@@ -708,24 +716,41 @@ function openMsgMenu(id) {
 }
 function closeSheet() { document.getElementById('sheet')?.remove(); }
 
-// долгое нажатие на сообщение — меню (на компьютере — правая кнопка мыши)
+// сообщение: долгое нажатие — меню; свайп вправо — ответить (на компьютере — правая кнопка мыши)
 let lp = null;
 document.addEventListener('touchstart', (e) => {
   const b = e.target.closest('.bubble[data-id]');
-  if (!b || e.target.closest('[data-act]')) return;
+  if (!b || e.target.closest('[data-act], a')) return;
   const t = e.touches[0];
-  lp = { x: t.clientX, y: t.clientY, fired: false };
+  lp = { b, x: t.clientX, y: t.clientY, fired: false, swipe: false, dx: 0 };
   lp.timer = setTimeout(() => { lp.fired = true; navigator.vibrate?.(10); openMsgMenu(b.dataset.id); }, 450);
 }, { passive: true });
 document.addEventListener('touchmove', (e) => {
   if (!lp) return;
   const t = e.touches[0];
-  if (Math.abs(t.clientX - lp.x) > 10 || Math.abs(t.clientY - lp.y) > 10) { clearTimeout(lp.timer); lp = null; }
+  const dx = t.clientX - lp.x, dy = t.clientY - lp.y;
+  if (!lp.swipe && (Math.abs(dx) > 10 || Math.abs(dy) > 10)) {
+    clearTimeout(lp.timer);
+    if (dx > 0 && Math.abs(dx) > Math.abs(dy) * 1.5) lp.swipe = true;
+    else { lp = null; return; }
+  }
+  if (lp.swipe) {
+    lp.dx = Math.max(0, Math.min(dx, 80));
+    lp.b.style.transition = 'none';
+    lp.b.style.transform = `translateX(${lp.dx}px)`;
+    lp.b.classList.toggle('swipe-ready', lp.dx >= 55);
+  }
 }, { passive: true });
 document.addEventListener('touchend', (e) => {
   if (!lp) return;
   clearTimeout(lp.timer);
   if (lp.fired) e.preventDefault(); // чтобы палец не нажал пункт меню при отпускании
+  if (lp.swipe) {
+    lp.b.style.transition = '';
+    lp.b.style.transform = '';
+    lp.b.classList.remove('swipe-ready');
+    if (lp.dx >= 55) { navigator.vibrate?.(10); startReply(lp.b.dataset.id); }
+  }
   lp = null;
 }, { passive: false });
 document.addEventListener('contextmenu', (e) => {
@@ -810,18 +835,33 @@ function onInvite(room, membership, prev) {
 }
 
 // ---------- автообновление: если на сайте новая версия — перезагружаемся ----------
-async function checkUpdate() {
+async function hasUpdate() {
   try {
     const html = await (await fetch('./?v=' + Date.now(), { cache: 'no-store' })).text();
     const fresh = html.match(/assets\/index-[\w-]+\.js/)?.[0];
     const mine = document.querySelector('script[src*="assets/index-"]')?.getAttribute('src');
-    if (fresh && mine && !mine.includes(fresh)) hardReload();
-  } catch {}
+    return !!(fresh && mine && !mine.includes(fresh));
+  } catch { return false; }
 }
+// сама проверка новой версии: пока играет радио — не перезагружаемся
+async function checkUpdate() { if (audio.paused && await hasUpdate()) hardReload(); }
 // перезагрузка мимо кэша телефона
 function hardReload() { location.replace(location.pathname + '?r=' + Date.now() + location.hash); }
 if (new URLSearchParams(location.search).has('r')) history.replaceState(null, '', location.pathname + location.hash);
-document.addEventListener('visibilitychange', () => { if (!document.hidden) checkUpdate(); });
+// ↻ и «потянуть вниз»: если вышла новая версия — перезагрузка, иначе просто свежие данные (радио не прерывается)
+async function softRefresh() {
+  if (!client || await hasUpdate()) return hardReload();
+  client.retryImmediately();
+  view?.load?.();
+  if (view) view.lastHtml = null;
+  refresh(true);
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return;
+  client?.retryImmediately(); // вернулись в приложение — сразу забираем новые сообщения
+  checkUpdate();
+});
+addEventListener('online', () => client?.retryImmediately());
 checkUpdate();
 
 // ---------- жесты: потянуть вниз — обновить; свайп вбок — меню ----------
@@ -874,7 +914,10 @@ addEventListener('touchend', () => {
     if (ptr.classList.contains('ready')) {
       ptr.classList.add('spin');
       ptr.style.transform = `translate(-50%, ${PULL}px)`;
-      hardReload();
+      softRefresh().finally(() => setTimeout(() => {
+        ptr.classList.remove('spin', 'ready');
+        ptr.style.transform = ''; ptr.style.opacity = '';
+      }, 600));
     } else { ptr.style.transform = ''; ptr.style.opacity = ''; }
   }
   g = null;
