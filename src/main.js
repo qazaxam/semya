@@ -2,7 +2,7 @@ import './style.css';
 import { APP_NAME, WALL_ROOM_NAME, STATIONS } from './config.js';
 import { loadSession, startLogin, finishLogin, getAuthResponse, clearSession, redirectUri } from './auth.js';
 import { startMatrix, joinSpaceRooms, useRecoveryKey, isVerified, logout } from './matrix.js';
-import { unlockAudio, sound, soundOn, setSound, toast, notifyState, askNotify, systemNotify, registerSW, setBadge, enablePush } from './notify.js';
+import { unlockAudio, sound, soundOn, setSound, toast, notifyState, askNotify, systemNotify, registerSW, setBadge, enablePush, pushStatus, testPush } from './notify.js';
 import { PUSH_GATEWAY, VAPID_PUBLIC, DEVICE_NAME } from './config.js';
 const turnOnPush = () => enablePush(client, { gateway: PUSH_GATEWAY, vapidKey: VAPID_PUBLIC, appName: APP_NAME, deviceName: DEVICE_NAME });
 
@@ -436,7 +436,9 @@ const views = {
       <div class="card">
         <h3>Уведомления и звуки</h3>
         <p class="muted" id="notifstate"></p>
+        <p class="muted" id="pushstate"></p>
         <button class="btn" data-act="notify" id="notifbtn">Включить уведомления</button>
+        <button class="btn gray" data-act="testpush" id="testbtn" hidden>Прислать тестовое уведомление</button>
         <label class="switch"><input type="checkbox" id="soundtoggle" ${soundOn() ? 'checked' : ''}> Звуки сообщений</label>
       </div>
       <div class="card"><button class="btn gray" data-act="logout">Выйти</button></div>`,
@@ -450,6 +452,15 @@ const views = {
         default: 'Звук и плашка сверху работают всегда, пока приложение открыто.',
       }[st];
       document.getElementById('notifbtn').hidden = st !== 'default';
+      if (st === 'granted') {
+        const ps = document.getElementById('pushstate');
+        ps.textContent = 'Проверяем рассыльщик…';
+        let ok = await pushStatus(client).catch(() => false);
+        if (!ok) { await turnOnPush().catch(() => {}); ok = await pushStatus(client).catch(() => false); }
+        ps.textContent = ok ? '📡 Телефон подключён к рассыльщику' : '⚠️ Рассыльщик не подключён — нажмите «Включить уведомления» ещё раз';
+        document.getElementById('testbtn').hidden = !ok;
+        document.getElementById('notifbtn').hidden = ok;
+      }
       const ok = await isVerified(client);
       const el = document.getElementById('verified');
       if (el) el.textContent = ok ? '✅ Устройство подтверждено' : '⚠️ Устройство не подтверждено — введите ключ.';
@@ -531,9 +542,18 @@ const actions = {
     if (ev) client.resendEvent(ev, room).catch(() => {});
   },
   notify: async () => {
-    await askNotify();
+    const st = await askNotify();
+    if (st === 'denied') alert('Уведомления запрещены. Включите их: Настройки iPhone → Уведомления → Юрт.');
     try { await turnOnPush(); } catch (e) { alert('Уведомления: ' + e.message); }
     route();
+  },
+  testpush: async (el) => {
+    el.disabled = true;
+    try {
+      await testPush(PUSH_GATEWAY);
+      el.textContent = 'Отправлено! Сверните приложение и подождите 10 секунд';
+    } catch (e) { alert('Не получилось: ' + e.message); }
+    setTimeout(() => { el.disabled = false; el.textContent = 'Прислать тестовое уведомление'; }, 15000);
   },
   // меню сообщения
   closesheet: () => closeSheet(),

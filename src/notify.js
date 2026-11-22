@@ -94,6 +94,28 @@ export async function enablePush(client, { gateway, vapidKey, appName, deviceNam
   return true;
 }
 
+// подключён ли этот телефон к рассыльщику
+export async function pushStatus(client) {
+  if (!('PushManager' in window) || notifyState() !== 'granted') return false;
+  const sub = await (await navigator.serviceWorker.ready).pushManager.getSubscription();
+  if (!sub) return false;
+  const { pushers } = await client.getPushers();
+  return pushers.some((p) => p.app_id === 'yurt.web' && p.pushkey === sub.endpoint);
+}
+
+// тест: рассыльщик пришлёт уведомление через 10 секунд
+export async function testPush(gateway) {
+  const sub = await (await navigator.serviceWorker.ready).pushManager.getSubscription();
+  if (!sub) throw new Error('сначала включите уведомления');
+  const j = sub.toJSON();
+  const r = await fetch(gateway + '/test', {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain' },
+    body: JSON.stringify({ endpoint: j.endpoint, p256dh: j.keys.p256dh, auth: j.keys.auth }),
+  });
+  if (!r.ok) throw new Error('рассыльщик не ответил');
+}
+
 // цифра на значке приложения
 export function setBadge(n) {
   try { n ? navigator.setAppBadge?.(n) : navigator.clearAppBadge?.(); } catch {}

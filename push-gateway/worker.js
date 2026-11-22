@@ -69,9 +69,38 @@ function describe(n) {
   return { title: who, body: 'Новое сообщение' + where, room_id: n.room_id };
 }
 
+const isPushHost = (endpoint) => {
+  try { const u = new URL(endpoint); return u.protocol === 'https:' && ALLOWED.some((r) => r.test(u.hostname)); } catch { return false; }
+};
+async function sendPush(endpoint, p256dh, auth, msg, env) {
+  return fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      Authorization: await vapid(endpoint, env),
+      TTL: '86400',
+      Urgency: 'high',
+      'Content-Encoding': 'aes128gcm',
+      'Content-Type': 'application/octet-stream',
+    },
+    body: await encrypt(msg, p256dh, auth),
+  });
+}
+
 export default {
-  async fetch(req, env) {
+  async fetch(req, env, ctx) {
     const url = new URL(req.url);
+    // кнопка «Прислать тестовое уведомление» в настройках: шлём через 10 секунд
+    if (req.method === 'POST' && url.pathname === '/test') {
+      const cors = { 'Access-Control-Allow-Origin': '*' };
+      let s;
+      try { s = JSON.parse(await req.text()); } catch { return new Response('bad', { status: 400, headers: cors }); }
+      if (!isPushHost(s.endpoint) || !s.p256dh || !s.auth) return new Response('bad', { status: 400, headers: cors });
+      ctx.waitUntil((async () => {
+        await new Promise((r) => setTimeout(r, 10000));
+        await sendPush(s.endpoint, s.p256dh, s.auth, JSON.stringify({ title: 'Юрт', body: 'Тест: уведомления работают ✅' }), env);
+      })());
+      return new Response('ok', { headers: cors });
+    }
     if (req.method !== 'POST' || url.pathname !== '/_matrix/push/v1/notify') {
       return new Response('Юрт: рассыльщик уведомлений работает', { headers: { 'content-type': 'text/plain; charset=utf-8' } });
     }
@@ -82,22 +111,11 @@ export default {
     const msg = JSON.stringify({ ...describe(n), unread: n.counts?.unread || 0 });
     await Promise.all((n.devices || []).map(async (d) => {
       try {
-        const ep = new URL(d.pushkey);
-        if (ep.protocol !== 'https:' || !ALLOWED.some((r) => r.test(ep.hostname)) || !d.data?.p256dh || !d.data?.auth) {
+        if (!isPushHost(d.pushkey) || !d.data?.p256dh || !d.data?.auth) {
           rejected.push(d.pushkey);
           return;
         }
-        const res = await fetch(d.pushkey, {
-          method: 'POST',
-          headers: {
-            Authorization: await vapid(d.pushkey, env),
-            TTL: '86400',
-            Urgency: 'high',
-            'Content-Encoding': 'aes128gcm',
-            'Content-Type': 'application/octet-stream',
-          },
-          body: await encrypt(msg, d.data.p256dh, d.data.auth),
-        });
+        const res = await sendPush(d.pushkey, d.data.p256dh, d.data.auth, msg, env);
         if (res.status === 404 || res.status === 410) rejected.push(d.pushkey); // телефон отписался
       } catch {}
     }));
