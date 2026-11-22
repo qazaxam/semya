@@ -60,18 +60,77 @@ function layout() {
     <header class="top">
       <button class="burger" data-act="menu" aria-label="Меню">☰</button>
       <div class="title" id="title"></div>
+      <a class="hbtn" href="#/search" aria-label="Поиск">${ICON_SEARCH}</a>
+      <button class="hbtn" data-act="reload" aria-label="Обновить">${ICON_RELOAD}</button>
     </header>
     <nav class="drawer" id="drawer">
       <div class="me">${avatar(client.getUserId(), client.getUser(client.getUserId())?.displayName)}
         <span>${esc(client.getUser(client.getUserId())?.displayName || client.getUserId())}</span></div>
       <a href="#/wall">Стена</a>
+      <a href="#/friends">Друзья <b id="requests"></b></a>
       <a href="#/chats">Сообщения <b id="unread"></b></a>
+      <a href="#/search">Поиск</a>
       <a href="#/settings">Настройки</a>
     </nav>
     <div class="shade" data-act="menu"></div>
     <main id="view"></main>`;
 }
 const toggleMenu = (open) => document.body.classList.toggle('menu-open', open);
+const ICON_SEARCH = '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 21 21"/></svg>';
+const ICON_RELOAD = '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 4v5h-5"/></svg>';
+
+// ---------- друзья = личные диалоги (m.direct) ----------
+function normId(t) {
+  let id = t.trim().toLowerCase().replace(/^@/, '');
+  if (!id.includes(':')) id += ':matrix.org';
+  return '@' + id;
+}
+const directMap = () => client.getAccountData('m.direct')?.getContent() || {};
+async function rememberDirect(id, roomId) {
+  const d = directMap();
+  if ((d[id] || []).includes(roomId)) return;
+  await client.setAccountData('m.direct', { ...d, [id]: [...(d[id] || []), roomId] });
+}
+// [{ id, name, room, status: 'friend' | 'sent' }]
+function friends() {
+  const out = [];
+  for (const [id, rooms] of Object.entries(directMap())) {
+    const room = rooms.map((r) => client.getRoom(r)).find((r) => r?.getMyMembership() === 'join');
+    const m = room?.getMember(id);
+    if (!m || !['join', 'invite'].includes(m.membership)) continue;
+    out.push({ id, name: m.name || id, room, status: m.membership === 'join' ? 'friend' : 'sent' });
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name));
+}
+const friendRequests = () => client.getRooms().filter((r) => r.getMyMembership() === 'invite' && r.getDMInviter());
+async function addFriend(id) {
+  const ex = friends().find((f) => f.id === id);
+  if (ex) return ex.room.roomId;
+  const { room_id } = await client.createRoom({
+    is_direct: true, invite: [id], preset: 'trusted_private_chat',
+    initial_state: [{ type: 'm.room.encryption', state_key: '', content: { algorithm: 'm.megolm.v1.aes-sha2' } }],
+  });
+  await rememberDirect(id, room_id);
+  return room_id;
+}
+async function searchPeople(term) {
+  const res = new Map();
+  try {
+    const r = await client.searchUserDirectory({ term, limit: 20 });
+    r.results.forEach((u) => res.set(u.user_id, u.display_name || u.user_id));
+  } catch {}
+  if (/^@?[\w.=\-/]+(:[\w.-]+)?$/.test(term.trim())) {
+    const id = normId(term);
+    if (!res.has(id)) {
+      try { const p = await client.getProfileInfo(id); res.set(id, p.displayname || id); } catch {}
+    }
+  }
+  res.delete(client.getUserId());
+  return [...res];
+}
+function personRow(id, name, right) {
+  return `<div class="row">${avatar(id, name)}<div class="grow"><b>${esc(name)}</b><small>${esc(id)}</small></div>${right}</div>`;
+}
 
 // ---------- экраны ----------
 const views = {
@@ -121,14 +180,9 @@ const views = {
 
   chats: () => ({
     title: 'Сообщения',
-    html: `
-      <form class="card newchat" data-form="newchat">
-        <input name="text" autocomplete="off" autocapitalize="off" placeholder="Логин, например yurt02">
-        <button class="btn">Написать</button>
-      </form>
-      <div id="list"></div>`,
+    html: '<div id="list"></div>',
     refresh() {
-      const invites = client.getRooms().filter((r) => r.getMyMembership() === 'invite').map((r) => `
+      const invites = client.getRooms().filter((r) => r.getMyMembership() === 'invite' && !r.getDMInviter()).map((r) => `
         <div class="row invite">${avatar(r.roomId, r.name)}<div class="grow"><b>${esc(r.name)}</b><small>Приглашение</small></div>
           <button class="btn sm" data-act="join" data-id="${esc(r.roomId)}">Принять</button>
           <button class="btn sm gray" data-act="leave" data-id="${esc(r.roomId)}">✕</button></div>`).join('');
@@ -139,7 +193,48 @@ const views = {
           <div class="grow"><b>${esc(r.name)}</b><small>${last ? esc(sender(last)) + ': ' + (last.getContent().body ? esc(last.getContent().body) : '…') : ''}</small></div>
           ${n ? `<span class="cnt">${n}</span>` : ''}</a>`;
       }).join('');
-      return invites + (rooms || '<div class="card muted">Диалогов пока нет</div>');
+      return invites + (rooms || '<div class="card muted">Диалогов пока нет. <a href="#/search">Найти друзей</a></div>');
+    },
+  }),
+
+  friends: () => ({
+    title: 'Друзья',
+    html: '<div id="list"></div>',
+    refresh() {
+      const req = friendRequests().map((r) => {
+        const id = r.getDMInviter();
+        return personRow(id, r.getMember(id)?.name || id, `
+          <button class="btn sm" data-act="acceptfriend" data-id="${esc(r.roomId)}">Принять</button>
+          <button class="btn sm gray" data-act="leave" data-id="${esc(r.roomId)}">✕</button>`);
+      }).join('');
+      const list = friends().map((f) => personRow(f.id, f.name, f.status === 'friend'
+        ? `<a class="btn sm" href="#/chat/${encodeURIComponent(f.room.roomId)}">Написать</a>`
+        : '<small>заявка отправлена</small>')).join('');
+      return (req ? `<h4 class="sect">Заявки в друзья</h4>${req}` : '')
+        + `<h4 class="sect">Мои друзья</h4>`
+        + (list || '<div class="card muted">Пока никого. <a href="#/search">Найти друзей</a></div>');
+    },
+  }),
+
+  search: () => ({
+    title: 'Поиск',
+    html: `
+      <form class="card newchat" data-form="search">
+        <input name="text" type="search" autocomplete="off" autocapitalize="off" placeholder="Имя или логин, например yurt02">
+        <button class="btn">Найти</button>
+      </form>
+      <div id="list"></div>`,
+    refresh() {
+      if (!this.results) return '<p class="muted pad">Введите логин родственника, например <b>yurt02</b>.</p>';
+      if (!this.results.length) return '<div class="card muted">Никого не нашли. Проверьте логин.</div>';
+      const fr = friends();
+      return this.results.map(([id, name]) => {
+        const f = fr.find((x) => x.id === id);
+        const right = f?.status === 'friend' ? `<a class="btn sm" href="#/chat/${encodeURIComponent(f.room.roomId)}">Написать</a>`
+          : f?.status === 'sent' ? '<small>заявка отправлена</small>'
+          : `<button class="btn sm" data-act="addfriend" data-id="${esc(id)}">Добавить в друзья</button>`;
+        return personRow(id, name, right);
+      }).join('');
     },
   }),
 
@@ -215,6 +310,7 @@ function scheduleRefresh() { clearTimeout(timer); timer = setTimeout(() => refre
 function refresh(first) {
   const unread = chatRooms().reduce((s, r) => s + r.getUnreadNotificationCount('total'), 0);
   const u = document.getElementById('unread'); if (u) u.textContent = unread || '';
+  const rq = document.getElementById('requests'); if (rq) rq.textContent = friendRequests().length || '';
   const list = document.getElementById('list');
   if (!list || !view?.refresh) return;
   const el = document.documentElement;
@@ -233,6 +329,20 @@ const actions = {
   more: async () => { const r = currentRoom(); if (r) { await client.scrollback(r, 30); refresh(false); } },
   join: async (el) => { await client.joinRoom(el.dataset.id); await joinSpaceRooms(client); },
   leave: (el) => client.leave(el.dataset.id),
+  reload: () => hardReload(),
+  addfriend: async (el) => {
+    el.disabled = true;
+    try { await addFriend(el.dataset.id); el.outerHTML = '<small>заявка отправлена</small>'; }
+    catch (e) { el.disabled = false; alert('Не получилось: ' + e.message); }
+  },
+  acceptfriend: async (el) => {
+    const r = client.getRoom(el.dataset.id);
+    const inviter = r.getDMInviter();
+    el.disabled = true;
+    await client.joinRoom(r.roomId);
+    await rememberDirect(inviter, r.roomId);
+    go('#/chat/' + encodeURIComponent(r.roomId));
+  },
   logout: () => confirm('Выйти из аккаунта на этом устройстве?') && logout(client),
 };
 
@@ -243,23 +353,9 @@ const forms = {
     view.load();
   },
   msg: (text) => client.sendTextMessage(view_arg(), text),
-  newchat: async (text) => {
-    let id = text.trim().toLowerCase().replace(/^@/, '');
-    if (!id.includes(':')) id += ':matrix.org';
-    id = '@' + id;
-    if (id === client.getUserId()) throw new Error('это ваш собственный логин');
-    try { await client.getProfileInfo(id); }
-    catch (e) { if (e.errcode === 'M_NOT_FOUND') throw new Error('пользователь ' + id + ' не найден'); }
-    // уже есть диалог с ним — просто открываем
-    const direct = client.getAccountData('m.direct')?.getContent() || {};
-    const existing = (direct[id] || []).find((rid) => client.getRoom(rid)?.getMyMembership() === 'join');
-    if (existing) return go('#/chat/' + encodeURIComponent(existing));
-    const { room_id } = await client.createRoom({
-      is_direct: true, invite: [id], preset: 'trusted_private_chat',
-      initial_state: [{ type: 'm.room.encryption', state_key: '', content: { algorithm: 'm.megolm.v1.aes-sha2' } }],
-    });
-    await client.setAccountData('m.direct', { ...direct, [id]: [...(direct[id] || []), room_id] });
-    go('#/chat/' + encodeURIComponent(room_id));
+  search: async (text) => {
+    view.results = await searchPeople(text);
+    refresh(false);
   },
   name: async (text) => { await client.setDisplayName(text); alert('Сохранено'); },
   recovery: async (text) => {
@@ -282,7 +378,7 @@ document.addEventListener('submit', async (e) => {
   const btn = f.querySelector('button'); btn.disabled = true;
   try {
     await forms[f.dataset.form](text);
-    if (!['name'].includes(f.dataset.form)) input.value = '';
+    if (!['name', 'search'].includes(f.dataset.form)) input.value = '';
   } catch (err) { alert('Не отправлено: ' + err.message); }
   btn.disabled = false;
 });

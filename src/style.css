@@ -42,7 +42,12 @@ input, textarea { width: 100%; font: inherit; padding: 8px 10px; border: 1px sol
 .top { position: sticky; top: 0; z-index: 10; height: 48px; padding-top: env(safe-area-inset-top); box-sizing: content-box;
   display: flex; align-items: center; background: var(--accent); color: #fff; }
 .burger { background: none; border: 0; color: #fff; font-size: 22px; width: 48px; height: 48px; cursor: pointer; }
-.title { font-weight: 600; font-size: 17px; }
+.title { flex: 1; font-weight: 600; font-size: 17px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hbtn { background: none; border: 0; color: #fff; width: 44px; height: 48px; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.hbtn:active { background: rgba(0,0,0,.12); }
+.sect { margin: 12px 4px 6px; color: var(--muted); font-size: 13px; font-weight: 600; text-transform: uppercase; }
+.pad { padding: 0 8px; }
+a.btn { display: inline-block; }
 .drawer { position: fixed; top: 0; bottom: 0; left: 0; width: 78%; max-width: 280px; z-index: 30; background: var(--menu);
   transform: translateX(-100%); transition: transform .2s; padding-top: env(safe-area-inset-top); }
 .drawer a { display: flex; justify-content: space-between; padding: 14px 18px; color: var(--menu-text); border-left: 4px solid transparent; }
