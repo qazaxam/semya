@@ -42,8 +42,18 @@ function body(ev) {
   if (ev.getType() === 'm.room.encrypted') return '<i class="muted">Расшифровка…</i>';
   const c = ev.getContent();
   if (c.msgtype === 'm.image') return '<i class="muted">[фото — будет в следующей версии]</i>';
-  return esc(c.body);
+  return esc(stripReply(c.body));
 }
+// старые клиенты добавляют к ответу цитату строками «> …» — убираем её, цитату рисуем сами
+function stripReply(s) {
+  if (!s?.startsWith('> ')) return s;
+  const lines = s.split('\n');
+  let i = 0;
+  while (i < lines.length && lines[i].startsWith('>')) i++;
+  if (lines[i] === '') i++;
+  return lines.slice(i).join('\n');
+}
+const plain = (ev) => (ev.isDecryptionFailure() ? '🔒 сообщение' : stripReply(ev.getContent().body || ''));
 const sender = (ev) => ev.sender?.name || ev.getSender();
 const wallRoom = () => client.getRooms().find((r) => r.getMyMembership() === 'join' && r.name === WALL_ROOM_NAME);
 const chatRooms = () => client.getRooms()
@@ -262,7 +272,7 @@ const views = {
         const last = timeline(r).at(-1);
         const n = r.getUnreadNotificationCount('total');
         return `<a class="row" href="#/chat/${encodeURIComponent(r.roomId)}">${avatar(r.roomId, r.name)}
-          <div class="grow"><b>${esc(r.name)}</b><small>${last ? esc(sender(last)) + ': ' + (last.getContent().body ? esc(last.getContent().body) : '…') : ''}</small></div>
+          <div class="grow"><b>${esc(r.name)}</b><small>${last ? esc(sender(last)) + ': ' + (last.getContent().body ? esc(plain(last)) : '…') : ''}</small></div>
           ${n ? `<span class="cnt">${n}</span>` : ''}</a>`;
       }).join('');
       return invites + (rooms || '<div class="card muted">Диалогов пока нет. <a href="#/search">Найти друзей</a></div>');
@@ -358,7 +368,8 @@ const views = {
   chat: (id) => ({
     title: client.getRoom(id)?.name || 'Чат',
     html: '<div id="list" class="chat"></div>',
-    bar: `<form class="writebar" data-form="msg"><input name="text" autocomplete="off" enterkeyhint="send" placeholder="Сообщение…"><button aria-label="Отправить">${ICON_SEND}</button></form>`,
+    bar: `<div id="replybar" class="replybar" hidden><div class="grow"><b></b><span></span></div><button type="button" data-act="cancelreply">✕</button></div>
+      <form class="writebar" data-form="msg"><input name="text" autocomplete="off" enterkeyhint="send" placeholder="Сообщение…"><button aria-label="Отправить">${ICON_SEND}</button></form>`,
     scrollBottom: true,
     refresh() {
       const room = client.getRoom(id);
@@ -370,6 +381,13 @@ const views = {
       const evs = timeline(room);
       const lastIn = [...evs].reverse().find((e) => !e.status);
       if (lastIn && !document.hidden) client.sendReadReceipt(lastIn).catch(() => {});
+      // реакции: id сообщения → { эмодзи: [события] }
+      const reacts = {};
+      for (const e of room.getLiveTimeline().getEvents()) {
+        const r = e.getRelation();
+        if (e.getType() !== 'm.reaction' || e.isRedacted() || r?.rel_type !== 'm.annotation') continue;
+        ((reacts[r.event_id] ||= {})[r.key] ||= []).push(e);
+      }
       let html = '<button class="more" data-act="more">Показать раньше</button>', day = '', prev = '';
       for (const ev of evs) {
         const d = dayLabel(ev.getTs());
@@ -381,9 +399,15 @@ const views = {
         const tick = !mine || st === 'not_sent' ? ''
           : st ? `<i class="tick">${ICON_CLOCK}</i>`
           : room.getUsersReadUpTo(ev).some((u) => u !== me) ? '<i class="tick read">✓✓</i>' : '<i class="tick">✓</i>';
-        html += `<div class="bubble ${mine ? 'mine' : ''} ${first ? 'first' : ''} ${isNew ? 'new' : ''} ${st === 'not_sent' ? 'failed' : ''}">
-          ${!mine && first && group ? `<b>${esc(sender(ev))}</b>` : ''}<span class="text">${body(ev)}</span><small>${hm(ev.getTs())}${tick}</small>
-          ${st === 'not_sent' ? `<button class="resend" data-act="resend" data-id="${esc(ev.getId())}">Не отправлено · повторить</button>` : ''}</div>`;
+        const replyId = ev.getContent()['m.relates_to']?.['m.in_reply_to']?.event_id;
+        const q = replyId && room.findEventById(replyId);
+        const quote = replyId ? `<div class="quote" data-act="jump" data-id="${esc(replyId)}"><b>${q ? esc(sender(q)) : 'Сообщение'}</b><span>${q ? esc(plain(q)) : '…'}</span></div>` : '';
+        const rx = reacts[ev.getId()];
+        const rxHtml = rx ? `<div class="reacts">${Object.entries(rx).map(([k, list]) =>
+          `<button class="react ${list.some((x) => x.getSender() === me) ? 'me' : ''}" data-act="react" data-id="${esc(ev.getId())}" data-key="${esc(k)}">${esc(k)}${list.length > 1 ? ' ' + list.length : ''}</button>`).join('')}</div>` : '';
+        html += `<div class="bubble ${mine ? 'mine' : ''} ${first ? 'first' : ''} ${isNew ? 'new' : ''} ${st === 'not_sent' ? 'failed' : ''}" data-id="${esc(ev.getId())}">
+          ${!mine && first && group ? `<b>${esc(sender(ev))}</b>` : ''}${quote}<span class="text">${body(ev)}</span><small>${hm(ev.getTs())}${tick}</small>
+          ${st === 'not_sent' ? `<button class="resend" data-act="resend" data-id="${esc(ev.getId())}">Не отправлено · повторить</button>` : ''}</div>${rxHtml ? `<div class="rxwrap ${mine ? 'mine' : ''}">${rxHtml}</div>` : ''}`;
       }
       if (!evs.length) html += '<p class="muted empty">Сообщений пока нет. Напишите первым!</p>';
       this.keys = new Set(evs.map(evKey));
@@ -454,6 +478,8 @@ function route() {
   main.scrollTop = 0;
   scrollTo(0, 0);
   document.getElementById('bar').innerHTML = view.bar || '';
+  replyTo = null;
+  closeSheet();
   document.querySelectorAll('.drawer a').forEach((a) => a.classList.toggle('sel', a.getAttribute('href') === '#/' + (name || 'wall')));
   refresh(true);
   view.after?.();
@@ -472,8 +498,13 @@ function refresh(first) {
   if (!list || !view?.refresh) return;
   const sc = document.getElementById('view');
   const full = document.body.classList.contains('fullscreen');
+  // палец на экране — не перерисовываем, иначе нажатие «проваливается»
+  if (touching && !first) { scheduleRefresh(); return; }
   const atBottom = full && sc.scrollHeight - sc.scrollTop - sc.clientHeight < 80;
-  list.innerHTML = view.refresh();
+  const html = view.refresh();
+  if (html === view.lastHtml && !first) return;
+  view.lastHtml = html;
+  list.innerHTML = html;
   if (full && ((view.scrollBottom && (first || atBottom)) || stickBottom)) sc.scrollTop = sc.scrollHeight;
   stickBottom = false;
 }
@@ -498,6 +529,34 @@ const actions = {
     if (ev) client.resendEvent(ev, room).catch(() => {});
   },
   notify: async () => { await askNotify(); route(); },
+  // меню сообщения
+  closesheet: () => closeSheet(),
+  reply: (el) => {
+    closeSheet();
+    const ev = findEv(el.dataset.id);
+    if (!ev) return;
+    replyTo = { id: ev.getId(), name: sender(ev), text: plain(ev) };
+    showReply();
+    document.querySelector('.writebar input')?.focus();
+  },
+  cancelreply: () => { replyTo = null; showReply(); },
+  copy: (el) => {
+    closeSheet();
+    const ev = findEv(el.dataset.id);
+    if (ev) navigator.clipboard?.writeText(plain(ev)).then(() => toast('Скопировано', ''));
+  },
+  redact: (el) => {
+    closeSheet();
+    if (confirm('Удалить сообщение у всех?')) client.redactEvent(view_arg(), el.dataset.id).catch((e) => alert(e.message));
+  },
+  react: (el) => { closeSheet(); toggleReaction(el.dataset.id, el.dataset.key); },
+  jump: (el) => {
+    const b = document.querySelector(`.bubble[data-id="${CSS.escape(el.dataset.id)}"]`);
+    if (!b) return;
+    b.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    b.classList.add('flash');
+    setTimeout(() => b.classList.remove('flash'), 1200);
+  },
   join: async (el) => { await client.joinRoom(el.dataset.id); await joinSpaceRooms(client); },
   leave: (el) => client.leave(el.dataset.id),
   reload: () => hardReload(),
@@ -528,7 +587,15 @@ const forms = {
     await client.sendMessage(wallRoom().roomId, view_arg(), { msgtype: 'm.text', body: text });
     view.load();
   },
-  msg: (text) => client.sendTextMessage(view_arg(), text),
+  msg: (text) => {
+    const content = { msgtype: 'm.text', body: text };
+    if (replyTo) {
+      content['m.relates_to'] = { 'm.in_reply_to': { event_id: replyTo.id } };
+      replyTo = null;
+      showReply();
+    }
+    return client.sendMessage(view_arg(), content);
+  },
   search: async (text) => {
     view.results = await searchPeople(text);
     refresh(false);
@@ -568,6 +635,91 @@ document.addEventListener('submit', async (e) => {
   btn.disabled = false;
 });
 
+// ---------- ответы, реакции, меню сообщения ----------
+let replyTo = null;
+const QUICK = ['❤️', '👍', '😂', '😮', '😢', '🙏'];
+const findEv = (id) => client.getRoom(view_arg())?.findEventById(id);
+function showReply() {
+  const rb = document.getElementById('replybar');
+  if (!rb) return;
+  rb.hidden = !replyTo;
+  if (replyTo) {
+    rb.querySelector('b').textContent = 'Ответ: ' + replyTo.name;
+    rb.querySelector('span').textContent = replyTo.text;
+  }
+}
+async function toggleReaction(id, key) {
+  const room = client.getRoom(view_arg());
+  if (!room) return;
+  const me = client.getUserId();
+  const mine = room.getLiveTimeline().getEvents().find((e) => e.getType() === 'm.reaction' && !e.isRedacted()
+    && e.getSender() === me && e.getRelation()?.event_id === id && e.getRelation()?.key === key);
+  try {
+    if (mine) await client.redactEvent(room.roomId, mine.getId());
+    else {
+      sound('send');
+      await client.sendEvent(room.roomId, 'm.reaction', { 'm.relates_to': { rel_type: 'm.annotation', event_id: id, key } });
+    }
+  } catch (e) { alert('Не получилось: ' + e.message); }
+}
+function openMsgMenu(id) {
+  const ev = findEv(id);
+  if (!ev || ev.status) return;
+  const mine = ev.getSender() === client.getUserId();
+  closeSheet();
+  const d = document.createElement('div');
+  d.id = 'sheet';
+  d.innerHTML = `<div class="sheet-shade" data-act="closesheet"></div>
+    <div class="sheet">
+      <div class="quick">${QUICK.map((k) => `<button data-act="react" data-id="${esc(id)}" data-key="${k}">${k}</button>`).join('')}</div>
+      <button data-act="reply" data-id="${esc(id)}">Ответить</button>
+      <button data-act="copy" data-id="${esc(id)}">Копировать</button>
+      ${mine ? `<button class="danger" data-act="redact" data-id="${esc(id)}">Удалить</button>` : ''}
+      <button class="cancel" data-act="closesheet">Отмена</button>
+    </div>`;
+  document.body.append(d);
+  requestAnimationFrame(() => d.classList.add('open'));
+}
+function closeSheet() { document.getElementById('sheet')?.remove(); }
+
+// долгое нажатие на сообщение — меню (на компьютере — правая кнопка мыши)
+let lp = null;
+document.addEventListener('touchstart', (e) => {
+  const b = e.target.closest('.bubble[data-id]');
+  if (!b || e.target.closest('[data-act]')) return;
+  const t = e.touches[0];
+  lp = { x: t.clientX, y: t.clientY, fired: false };
+  lp.timer = setTimeout(() => { lp.fired = true; navigator.vibrate?.(10); openMsgMenu(b.dataset.id); }, 450);
+}, { passive: true });
+document.addEventListener('touchmove', (e) => {
+  if (!lp) return;
+  const t = e.touches[0];
+  if (Math.abs(t.clientX - lp.x) > 10 || Math.abs(t.clientY - lp.y) > 10) { clearTimeout(lp.timer); lp = null; }
+}, { passive: true });
+document.addEventListener('touchend', (e) => {
+  if (!lp) return;
+  clearTimeout(lp.timer);
+  if (lp.fired) e.preventDefault(); // чтобы палец не нажал пункт меню при отпускании
+  lp = null;
+}, { passive: false });
+document.addEventListener('contextmenu', (e) => {
+  const b = e.target.closest('.bubble[data-id]');
+  if (b) { e.preventDefault(); openMsgMenu(b.dataset.id); }
+});
+
+// касание экрана: пока палец на экране, список не перерисовывается
+let touching = false, touchTimer;
+addEventListener('touchstart', () => { touching = true; clearTimeout(touchTimer); }, { passive: true, capture: true });
+const untouch = () => { clearTimeout(touchTimer); touchTimer = setTimeout(() => { touching = false; }, 400); };
+addEventListener('touchend', untouch, { passive: true, capture: true });
+addEventListener('touchcancel', untouch, { passive: true, capture: true });
+
+// клавиатура открыта — убираем нижний отступ под «полоску» iPhone
+document.addEventListener('focusin', (e) => { if (e.target.matches('input, textarea')) document.body.classList.add('kb'); });
+document.addEventListener('focusout', () => setTimeout(() => {
+  if (!document.activeElement?.matches?.('input, textarea')) document.body.classList.remove('kb');
+}, 50));
+
 // кнопка «отправить» не убирает клавиатуру
 document.addEventListener('mousedown', (e) => { if (e.target.closest('.writebar button')) e.preventDefault(); });
 document.addEventListener('touchend', (e) => {
@@ -595,7 +747,6 @@ function fitViewport() {
   const near = sc && sc.scrollHeight - sc.scrollTop - sc.clientHeight < 120;
   document.documentElement.style.setProperty('--vh', vv.height + 'px');
   document.documentElement.style.setProperty('--vt', vv.offsetTop + 'px');
-  document.body.classList.toggle('kb', vv.height < innerHeight - 120);
   if (near && document.body.classList.contains('fullscreen')) sc.scrollTop = sc.scrollHeight;
 }
 visualViewport?.addEventListener('resize', fitViewport);
@@ -723,7 +874,7 @@ async function boot() {
   }
   client.on('Session.logged_out', () => { clearSession(); location.href = redirectUri; });
   for (const ev of ['Room.timeline', 'Event.decrypted', 'Room', 'Room.myMembership', 'Room.name', 'Room.receipt',
-    'Room.localEchoUpdated', 'RoomMember.typing', 'Thread.update', 'Thread.new'])
+    'Room.localEchoUpdated', 'Room.redaction', 'RoomMember.typing', 'Thread.update', 'Thread.new'])
     client.on(ev, scheduleRefresh);
   client.on('Room.timeline', onTimeline);
   client.on('Room.myMembership', onInvite);

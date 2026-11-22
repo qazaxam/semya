@@ -162,5 +162,44 @@ body.kb .writebar { padding-bottom: 8px; }
 .toast b { display: block; color: var(--accent-dark); }
 .toast span { display: block; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+/* сообщение: без выделения текста при долгом нажатии (копирование — через меню) */
+.bubble[data-id] { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; transition: background .3s; }
+.bubble.flash { background: #fff3c4; }
+.quote { border-left: 3px solid var(--accent-light); background: rgba(0,0,0,.04); border-radius: 4px; padding: 3px 8px; margin: 2px 0 4px;
+  font-size: 13px; cursor: pointer; }
+.quote b { display: block; font-size: 12px; color: var(--accent-dark); }
+.quote span { display: block; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60vw; }
+.rxwrap { display: flex; margin: 2px 0 2px; }
+.rxwrap.mine { justify-content: flex-end; }
+.reacts { display: flex; flex-wrap: wrap; gap: 4px; }
+.react { border: 1px solid var(--line); background: #fff; color: var(--text); border-radius: 12px; padding: 1px 8px; font: inherit; font-size: 13px; }
+.react.me { border-color: var(--accent-light); background: #e3edf7; }
+
+/* ответ над полем ввода */
+.replybar { display: flex; align-items: center; gap: 8px; padding: 6px 10px 0 14px; background: #f7f8fa; border-top: 1px solid var(--line); }
+.replybar[hidden] { display: none; }
+.replybar + .writebar { border-top: 0; }
+.replybar .grow { min-width: 0; border-left: 3px solid var(--accent); padding-left: 8px; }
+.replybar b { display: block; font-size: 13px; color: var(--accent-dark); }
+.replybar span { display: block; font-size: 13px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.replybar button { background: none; border: 0; font-size: 18px; color: var(--muted); width: 32px; height: 32px; }
+
+/* нижнее меню сообщения */
+.sheet-shade { position: fixed; inset: 0; z-index: 60; background: rgba(0,0,0,.35); opacity: 0; transition: opacity .2s; }
+.sheet { position: fixed; left: 8px; right: 8px; bottom: calc(8px + env(safe-area-inset-bottom)); z-index: 61; max-width: 480px; margin: 0 auto;
+  display: flex; flex-direction: column; gap: 6px; transform: translateY(120%); transition: transform .25s cubic-bezier(.2,.9,.3,1); }
+#sheet.open .sheet-shade { opacity: 1; }
+#sheet.open .sheet { transform: none; }
+.sheet > button { background: #fff; border: 0; border-radius: 12px; padding: 14px; font: inherit; font-size: 17px; color: var(--accent-dark); }
+.sheet > button.danger { color: #d9534f; }
+.sheet > button.cancel { font-weight: 600; margin-top: 4px; }
+.quick { display: flex; justify-content: space-around; background: #fff; border-radius: 14px; padding: 8px; }
+.quick button { background: none; border: 0; font-size: 28px; width: 46px; height: 46px; border-radius: 50%; }
+.quick button:active { background: var(--bg); transform: scale(1.15); }
+
+/* крупнее цели для пальца */
+.btn.sm { min-height: 36px; }
+.row { min-height: 60px; }
+
 .switch { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
 .switch input { width: 20px; height: 20px; }
