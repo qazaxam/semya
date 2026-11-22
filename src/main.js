@@ -287,6 +287,18 @@ document.addEventListener('submit', async (e) => {
   btn.disabled = false;
 });
 
+// ---------- автообновление: если на сайте новая версия — перезагружаемся ----------
+async function checkUpdate() {
+  try {
+    const html = await (await fetch('./?v=' + Date.now(), { cache: 'no-store' })).text();
+    const fresh = html.match(/assets\/index-[\w-]+\.js/)?.[0];
+    const mine = document.querySelector('script[src*="assets/index-"]')?.getAttribute('src');
+    if (fresh && mine && !mine.includes(fresh)) location.reload();
+  } catch {}
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden) checkUpdate(); });
+checkUpdate();
+
 // ---------- запуск ----------
 async function boot() {
   document.title = APP_NAME;
