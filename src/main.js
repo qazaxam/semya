@@ -139,22 +139,45 @@ function personRow(id, name, right) {
 }
 
 // ---------- радио: играет, пока переходишь по разделам ----------
+const ICON_PLAY = '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M8 5.5v13l10.5-6.5z"/></svg>';
+const ICON_PAUSE = '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>';
 const audio = new Audio();
 let station = null;
 function playStation(i) {
+  if (i === null || i === undefined) return;
   if (station === i && !audio.paused) audio.pause();
   else {
-    if (station !== i) { audio.src = STATIONS[i][1]; station = i; }
+    if (station !== i) { audio.src = STATIONS[i][1]; station = i; setMediaInfo(); }
     audio.play().catch((e) => alert('Станция не играет: ' + e.message));
   }
   updatePlayer();
+}
+// экран блокировки / Пункт управления iPhone
+function setMediaInfo() {
+  if (!('mediaSession' in navigator) || station === null) return;
+  navigator.mediaSession.metadata = new MediaMetadata({
+    title: STATIONS[station][0],
+    artist: 'Радио · ' + APP_NAME,
+    artwork: [{ src: new URL('./icons/icon-512.png', location.href).href, sizes: '512x512', type: 'image/png' }],
+  });
+}
+if ('mediaSession' in navigator) {
+  const ms = navigator.mediaSession;
+  const step = (d) => station !== null && playStation((station + d + STATIONS.length) % STATIONS.length);
+  const set = (a, f) => { try { ms.setActionHandler(a, f); } catch {} };
+  set('play', () => { if (audio.paused) playStation(station); });
+  set('pause', () => audio.pause());
+  set('previoustrack', () => step(-1));
+  set('nexttrack', () => step(1));
+  set('seekbackward', null);
+  set('seekforward', null);
 }
 function updatePlayer() {
   const p = document.getElementById('player');
   if (p) {
     p.hidden = station === null;
     if (station !== null) p.innerHTML = `
-      <button data-act="radiotoggle">${audio.paused ? '▶' : '❚❚'}</button>
+      <button data-act="radiotoggle">${audio.paused ? ICON_PLAY : ICON_PAUSE}</button>
       <a href="#/radio">${esc(STATIONS[station][0])}</a>
       <button data-act="radiostop">✕</button>`;
   }
@@ -285,7 +308,7 @@ const views = {
       return STATIONS.map(([name], i) => {
         const on = station === i && !audio.paused;
         return `<button class="row station ${on ? 'on' : ''}" data-act="radio" data-id="${i}">
-          <span class="ava" style="background:${COLORS[i % COLORS.length]}">${on ? '❚❚' : '▶'}</span>
+          <span class="ava" style="background:${COLORS[i % COLORS.length]}">${on ? ICON_PAUSE : ICON_PLAY}</span>
           <div class="grow"><b>${esc(name)}</b><small>${on ? 'Играет' : 'Турция'}</small></div></button>`;
       }).join('') + '<p class="muted pad">Музыка продолжает играть, пока вы переходите по разделам.</p>';
     },
@@ -478,24 +501,59 @@ if (new URLSearchParams(location.search).has('r')) history.replaceState(null, ''
 document.addEventListener('visibilitychange', () => { if (!document.hidden) checkUpdate(); });
 checkUpdate();
 
-// ---------- потянуть вниз — обновить ----------
+// ---------- жесты: потянуть вниз — обновить; свайп вбок — меню ----------
 const ptr = document.createElement('div');
 ptr.className = 'ptr';
+ptr.innerHTML = ICON_RELOAD;
 document.body.prepend(ptr);
-let startY = null, pull = 0;
+const PULL = 90;
+let g = null;
 addEventListener('touchstart', (e) => {
-  startY = scrollY <= 0 && !document.body.classList.contains('menu-open') ? e.touches[0].clientY : null;
+  const t = e.touches[0];
+  g = { x: t.clientX, y: t.clientY, dx: 0, dy: 0, mode: null, open: document.body.classList.contains('menu-open') };
 }, { passive: true });
 addEventListener('touchmove', (e) => {
-  if (startY === null) return;
-  pull = Math.max(0, e.touches[0].clientY - startY);
-  ptr.style.height = Math.min(pull / 2, 60) + 'px';
-  ptr.textContent = pull > 120 ? '↻ Отпустите — обновим' : '↓ Потяните, чтобы обновить';
+  if (!g) return;
+  const t = e.touches[0];
+  g.dx = t.clientX - g.x; g.dy = t.clientY - g.y;
+  const drawer = document.getElementById('drawer');
+  if (!g.mode) {
+    if (Math.abs(g.dx) < 8 && Math.abs(g.dy) < 8) return;
+    if (Math.abs(g.dx) > Math.abs(g.dy)) g.mode = drawer && (g.open || g.x < 30) ? 'menu' : 'none';
+    else g.mode = !g.open && g.dy > 0 && scrollY <= 0 ? 'ptr' : 'none';
+    if (g.mode === 'menu') document.body.classList.add('dragging');
+  }
+  if (g.mode === 'menu') {
+    const w = drawer.offsetWidth;
+    const pos = Math.min(0, Math.max(-w, (g.open ? 0 : -w) + g.dx));
+    drawer.style.transform = `translateX(${pos}px)`;
+    document.querySelector('.shade').style.opacity = 1 + pos / w;
+  } else if (g.mode === 'ptr') {
+    const p = Math.min(g.dy * 0.6, PULL + 20);
+    ptr.style.transition = 'none';
+    ptr.style.transform = `translate(-50%, ${p}px) rotate(${p * 3}deg)`;
+    ptr.style.opacity = Math.min(1, p / PULL);
+    ptr.classList.toggle('ready', p >= PULL);
+  }
 }, { passive: true });
 addEventListener('touchend', () => {
-  if (pull > 120) { ptr.textContent = 'Обновляем…'; hardReload(); }
-  else ptr.style.height = '0';
-  startY = null; pull = 0;
+  if (g?.mode === 'menu') {
+    const drawer = document.getElementById('drawer');
+    const w = drawer.offsetWidth;
+    const pos = (g.open ? 0 : -w) + g.dx;
+    document.body.classList.remove('dragging');
+    drawer.style.transform = '';
+    document.querySelector('.shade').style.opacity = '';
+    toggleMenu(pos > -w / 2);
+  } else if (g?.mode === 'ptr') {
+    ptr.style.transition = '';
+    if (ptr.classList.contains('ready')) {
+      ptr.classList.add('spin');
+      ptr.style.transform = `translate(-50%, ${PULL}px)`;
+      hardReload();
+    } else { ptr.style.transform = ''; ptr.style.opacity = ''; }
+  }
+  g = null;
 });
 
 // ---------- запуск ----------
