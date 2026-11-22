@@ -23,4 +23,6 @@
 .qnav { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; }
 .qnav button:not(.qlike) { width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--line); background: #fff; font-size: 22px; color: var(--accent-dark); }
 .qnav .qlike { margin: 0; font-size: 20px; }
+.qwall .qfrom { display: flex; align-items: center; gap: 8px; padding: 4px 4px 6px; color: var(--accent-dark); font-weight: 600; font-size: 14px; }
+.qava.sm { width: 26px; height: 26px; font-size: 16px; }
 .qday { display: block; color: var(--text); background: linear-gradient(135deg, #f4f8fc, #e9f0f8); }

@@ -6,7 +6,7 @@ import { unlockAudio, sound, soundOn, setSound, toast, notifyState, askNotify, s
 import { PUSH_GATEWAY, VAPID_PUBLIC, DEVICE_NAME } from './config.js';
 import { sendMedia, mediaUrl, prepareImage, videoMeta, record, mb, fmtDur } from './media.js';
 import { exportArchive, toMarkdown, download } from './archive.js';
-import { QUOTES_ROOM, quotesView, quoteActions, quoteOfDay } from './extras/quotes/index.js'; // extras:quotes
+import { QUOTES_ROOM, quotesView, quoteActions, quotesForWall, mixFeed } from './extras/quotes/index.js'; // extras:quotes
 const turnOnPush = () => enablePush(client, { gateway: PUSH_GATEWAY, vapidKey: VAPID_PUBLIC, appName: APP_NAME, deviceName: DEVICE_NAME });
 
 const $app = document.getElementById('app');
@@ -274,11 +274,10 @@ const views = {
       <button class="more" data-act="more">Показать ещё</button>`,
     refresh() {
       const room = wallRoom();
-      if (!room) return `<div class="card muted">Комната «${esc(WALL_ROOM_NAME)}» не найдена. Попросите, чтобы вас пригласили в пространство семьи.</div>`;
-      const posts = timeline(room).reverse();
-      const qd = quoteOfDay(qctx); // extras:quotes
-      if (!posts.length) return qd + '<div class="card muted">Пока пусто. Напишите первый пост!</div>';
-      return qd + posts.map((ev) => post(ev, true)).join('');
+      let feed = room ? timeline(room).reverse().map((ev) => post(ev, true)) : [];
+      feed = mixFeed(feed, quotesForWall(qctx)); // extras:quotes
+      const note = room ? '' : `<div class="card muted">Комната «${esc(WALL_ROOM_NAME)}» не найдена. Попросите, чтобы вас пригласили в пространство семьи.</div>`;
+      return note + (feed.join('') || (room ? '<div class="card muted">Пока пусто. Напишите первый пост!</div>' : ''));
     },
   }),
 

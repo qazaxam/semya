@@ -123,6 +123,24 @@ function card(p, liked, esc, full = true) {
   </div>`;
 }
 
+// цитаты для ленты Стены (новый порядок каждый день)
+export function quotesForWall(ctx, limit = 12) {
+  const room = quotesRoom(ctx.client);
+  if (!room) return [`<a class="card qday" href="#/quotes"><div class="qsec">❝ Группа «${QUOTES_ROOM}»</div>
+    <div>Загрузите свои цитаты и заметки — они появятся здесь, на Стене.</div></a>`];
+  const hearts = myHearts(room, ctx.client.getUserId());
+  const day = Number(new Date().toISOString().slice(0, 10).replace(/-/g, ''));
+  return shuffled(posts(room), day + 7).slice(0, limit).map((p) =>
+    `<div class="qwall"><a class="qfrom" href="#/quotes"><span class="qava sm">❝</span>${QUOTES_ROOM}</a>${card(p, hearts.has(p.ev.getId()), ctx.esc)}</div>`);
+}
+// посты Стены вперемешку с цитатами: после каждых двух постов — цитата
+export function mixFeed(posts, quotes) {
+  const out = [];
+  let q = 0;
+  posts.forEach((p, i) => { out.push(p); if (i % 2 === 1 && q < quotes.length) out.push(quotes[q++]); });
+  return out.concat(quotes.slice(q));
+}
+
 // «Цитата дня» вверху Стены
 export function quoteOfDay(ctx) {
   const room = quotesRoom(ctx.client);
@@ -218,7 +236,8 @@ export function quoteActions(ctx) {
       } catch (e) { alert('Не получилось: ' + e.message); }
       el.disabled = false;
     },
-    quotesimport: () => ctx.pickFiles('.md,text/markdown,text/plain', async (file) => {
+    // без фильтра типов: iPhone иначе делает .md-файлы серыми (их нельзя выбрать)
+    quotesimport: () => ctx.pickFiles('', async (file) => {
       const entries = parseNotes(await file.text());
       if (!entries.length) return alert('В файле не нашлось записей (нужны заголовки «## Раздел» и «### Запись»).');
       if (!confirm(`Найдено записей: ${entries.length}. Загрузить в группу «${QUOTES_ROOM}»? Повторные не дублируются.`)) return;
