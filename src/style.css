@@ -206,5 +206,69 @@ body.kb .writebar { padding-bottom: 8px; }
 .btn.sm { min-height: 36px; }
 .row { min-height: 60px; }
 
+/* сообщения обёрнуты в .msg (пузырь + реакции) */
+.msg { display: flex; flex-direction: column; }
+.msg.mine .rxwrap { justify-content: flex-end; }
+
+/* медиа в пузыре */
+.bubble.media { padding: 4px 4px 6px; }
+.bubble.media > small { margin-right: 6px; }
+.photo { display: block; width: 240px; max-width: 100%; min-height: 80px; border-radius: 12px; background: #dfe4ea; object-fit: cover; cursor: zoom-in; }
+.video { display: block; width: 260px; max-width: 100%; border-radius: 12px; background: #000; }
+.broken { opacity: .4; }
+.roundwrap { position: relative; width: 200px; height: 200px; cursor: pointer; }
+.round { width: 200px; height: 200px; border-radius: 50%; object-fit: cover; background: #222; display: block; }
+.roundwrap .playicon { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #fff; }
+.roundwrap .playicon svg { width: 44px; height: 44px; filter: drop-shadow(0 1px 3px rgba(0,0,0,.5)); }
+.roundwrap.playing .playicon { display: none; }
+.roundwrap .dur { position: absolute; left: 12px; bottom: 8px; color: #fff; background: rgba(0,0,0,.45); border-radius: 8px; padding: 0 6px; margin: 0; }
+.bubble.media:has(.roundwrap) { background: none; box-shadow: none; }
+.voice { display: flex; align-items: center; gap: 8px; min-width: 200px; padding: 4px 6px 0; }
+.voice button { flex: none; width: 38px; height: 38px; border-radius: 50%; border: 0; background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center; }
+.voice .wave { flex: 1; height: 4px; background: rgba(0,0,0,.12); border-radius: 2px; overflow: hidden; }
+.voice .wave i { display: block; height: 100%; width: 0; background: var(--accent); }
+.voice small { margin: 0 !important; float: none !important; }
+.file { display: flex; align-items: center; gap: 10px; background: none; border: 0; font: inherit; text-align: left; padding: 6px; max-width: 260px; color: var(--text); }
+.file .ficon { width: 40px; height: 40px; border-radius: 50%; background: var(--accent); display: flex; align-items: center; justify-content: center; flex: none; }
+.file b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--accent-dark); }
+.file.loading { opacity: .5; }
+.bubble.upload .prog { height: 4px; background: rgba(0,0,0,.1); border-radius: 2px; margin-top: 6px; overflow: hidden; min-width: 160px; }
+.bubble.upload .prog i { display: block; height: 100%; background: var(--accent); transition: width .2s; }
+
+/* просмотр фото на весь экран */
+#viewer { position: fixed; inset: 0; z-index: 70; background: rgba(0,0,0,.92); display: flex; align-items: center; justify-content: center; }
+#viewer img { max-width: 100%; max-height: 100%; object-fit: contain; }
+
+/* панель ввода: 📎 [поле] 🎤/➤ */
+.writebar .wb { flex: none; width: 36px; height: 40px; border: 0; background: none; color: var(--muted); display: flex; align-items: center; justify-content: center; border-radius: 50%; }
+.writebar .mic { touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.writebar[data-form="msg"]:not(.has-text) .send { display: none; }
+.writebar[data-form="msg"].has-text .mic { display: none; }
+.recinfo { display: none; flex: 1; align-items: center; gap: 8px; height: 40px; padding-left: 6px; }
+.recinfo .dot { width: 10px; height: 10px; border-radius: 50%; background: #e0393e; animation: blink 1s infinite; }
+.recinfo .hint { color: var(--muted); font-size: 13px; margin-left: auto; }
+@keyframes blink { 50% { opacity: .2; } }
+.writebar.recording .recinfo { display: flex; }
+.writebar.recording input, .writebar.recording .attach { display: none; }
+.writebar.recording .mic { background: #e0393e; color: #fff; transform: scale(1.35); }
+.writebar.cancel .recinfo .hint { color: #e0393e; font-weight: 600; }
+.writebar.cancel .mic { background: var(--muted); }
+
+/* запись кружка */
+#recorder { position: fixed; inset: 0; z-index: 70; background: rgba(20,24,28,.96); color: #fff;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; padding: 20px; }
+.rec-circle { position: relative; width: min(78vw, 320px); aspect-ratio: 1; }
+.rec-circle video { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; transform: scaleX(-1); background: #000; }
+.rec-circle svg { position: absolute; inset: -6px; width: calc(100% + 12px); height: calc(100% + 12px); transform: rotate(-90deg); }
+.rec-circle circle { fill: none; stroke: #e0393e; stroke-width: 2.5; stroke-dasharray: 301.6; stroke-dashoffset: 301.6; transition: stroke-dashoffset .2s linear; }
+.rec-time { font-size: 18px; font-variant-numeric: tabular-nums; }
+.rec-btns { display: flex; align-items: center; gap: 40px; }
+.rec-btns > button:first-child { width: 52px; height: 52px; border-radius: 50%; border: 0; background: rgba(255,255,255,.15); color: #fff; font-size: 22px; }
+.rec-btns > span { width: 52px; }
+.rec-main { width: 76px; height: 76px; border-radius: 50%; border: 5px solid #fff; background: #e0393e; transition: border-radius .2s; }
+#recorder.recording .rec-main { border-radius: 22px; }
+#recorder.sending { opacity: .6; pointer-events: none; }
+.rec-hint { color: rgba(255,255,255,.7); font-size: 14px; text-align: center; margin: 0; }
+
 .switch { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
 .switch input { width: 20px; height: 20px; }

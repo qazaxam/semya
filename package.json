@@ -10,6 +10,7 @@
     "icons": "node scripts/icons.mjs"
   },
   "dependencies": {
+    "matrix-encrypt-attachment": "^1.0.3",
     "matrix-js-sdk": "^45.1.0"
   },
   "devDependencies": {

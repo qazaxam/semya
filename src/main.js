@@ -4,6 +4,7 @@ import { loadSession, startLogin, finishLogin, getAuthResponse, clearSession, re
 import { startMatrix, joinSpaceRooms, useRecoveryKey, isVerified, logout } from './matrix.js';
 import { unlockAudio, sound, soundOn, setSound, toast, notifyState, askNotify, systemNotify, registerSW, setBadge, enablePush, pushStatus, testPush } from './notify.js';
 import { PUSH_GATEWAY, VAPID_PUBLIC, DEVICE_NAME } from './config.js';
+import { sendMedia, mediaUrl, prepareImage, videoMeta, record, mb, fmtDur } from './media.js';
 const turnOnPush = () => enablePush(client, { gateway: PUSH_GATEWAY, vapidKey: VAPID_PUBLIC, appName: APP_NAME, deviceName: DEVICE_NAME });
 
 const $app = document.getElementById('app');
@@ -43,8 +44,25 @@ function body(ev) {
   if (ev.isDecryptionFailure()) return '<i class="muted">🔒 Не удалось расшифровать. Введите ключ восстановления в «Настройках».</i>';
   if (ev.getType() === 'm.room.encrypted') return '<i class="muted">Расшифровка…</i>';
   const c = ev.getContent();
-  if (c.msgtype === 'm.image') return '<i class="muted">[фото — будет в следующей версии]</i>';
+  if (MEDIA.includes(c.msgtype)) { mediaEvents.set(ev.getId(), c); return mediaHtml(ev.getId(), c); }
   return linkify(esc(stripReply(c.body)));
+}
+// ---------- медиа в сообщениях ----------
+const MEDIA = ['m.image', 'm.video', 'm.audio', 'm.file'];
+const mediaEvents = new Map(); // id события → содержимое (для загрузки и расшифровки)
+function mediaHtml(id, c) {
+  const i = c.info || {};
+  const ar = i.w && i.h ? `aspect-ratio:${i.w}/${i.h}` : '';
+  const a = esc(id);
+  if (c.msgtype === 'm.image') return `<img class="photo" data-media="${a}" data-act="photo" alt="" style="${ar}">`;
+  if (c.msgtype === 'm.video' && c['yurt.round']) return `<div class="roundwrap" data-act="playvideo">
+    <video class="round" data-media="${a}" playsinline loop preload="metadata"></video>
+    <span class="playicon">${ICON_PLAY}</span><small class="dur">${fmtDur(i.duration)}</small></div>`;
+  if (c.msgtype === 'm.video') return `<video class="video" data-media="${a}" playsinline controls preload="metadata" style="${ar}"></video>`;
+  if (c.msgtype === 'm.audio') return `<div class="voice" data-media="${a}"><button data-act="voice" aria-label="Слушать">${ICON_PLAY}</button>
+    <div class="wave"><i></i></div><small>${fmtDur(i.duration)}</small></div>`;
+  return `<button class="file" data-act="openfile" data-media="${a}"><span class="ficon">📎</span>
+    <span class="grow"><b>${esc(c.body)}</b><small>${i.size ? mb(i.size) : ''}</small></span></button>`;
 }
 // ссылки кликабельны (без превью: в зашифрованных чатах превью выключены ради приватности)
 const linkify = (html) => html.replace(/\bhttps?:\/\/[^\s<]+[^\s<.,:;!?)"'»]/g,
@@ -58,7 +76,14 @@ function stripReply(s) {
   if (lines[i] === '') i++;
   return lines.slice(i).join('\n');
 }
-const plain = (ev) => (ev.isDecryptionFailure() ? '🔒 сообщение' : stripReply(ev.getContent().body || ''));
+// короткий текст сообщения: для цитат, списка чатов, уведомлений
+function plain(ev) {
+  if (ev.isDecryptionFailure()) return '🔒 сообщение';
+  const c = ev.getContent();
+  if (c['yurt.round']) return '🎥 Видео-кружок';
+  return { 'm.image': '📷 Фото', 'm.video': '🎥 Видео', 'm.audio': '🎤 Голосовое', 'm.file': '📎 ' + (c.body || 'Файл') }[c.msgtype]
+    || stripReply(c.body || '');
+}
 const sender = (ev) => ev.sender?.name || ev.getSender();
 const wallRoom = () => client.getRooms().find((r) => r.getMyMembership() === 'join' && r.name === WALL_ROOM_NAME);
 const chatRooms = () => client.getRooms()
@@ -117,7 +142,9 @@ const toggleMenu = (open) => document.body.classList.toggle('menu-open', open);
 const ICON_SEARCH = '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 21 21"/></svg>';
 const ICON_RELOAD = '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 4v5h-5"/></svg>';
 const ICON_SEND = '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6 3.4 10l12.6 2-12.6 2z"/></svg>';
-const ICON_CLOCK = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>';
+const ICON_CLIP = '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 11.5 12.4 19a5 5 0 0 1-7.1-7.1l8-8a3.3 3.3 0 0 1 4.7 4.7l-8 8a1.7 1.7 0 0 1-2.4-2.4L15 6.8"/></svg>';
+const ICON_MIC = '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg>';
+const ICON_CLOCK ='<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>';
 
 // ---------- друзья = личные диалоги (m.direct) ----------
 function normId(t) {
@@ -374,8 +401,15 @@ const views = {
     title: client.getRoom(id)?.name || 'Чат',
     html: '<div id="list" class="chat"></div>',
     bar: `<div id="replybar" class="replybar" hidden><div class="grow"><b></b><span></span></div><button type="button" data-act="cancelreply">✕</button></div>
-      <form class="writebar" data-form="msg"><input name="text" autocomplete="off" enterkeyhint="send" placeholder="Сообщение…"><button aria-label="Отправить">${ICON_SEND}</button></form>`,
+      <form class="writebar" data-form="msg">
+        <button type="button" class="wb attach" data-act="attach" aria-label="Прикрепить">${ICON_CLIP}</button>
+        <input name="text" autocomplete="off" enterkeyhint="send" placeholder="Сообщение…">
+        <div class="recinfo"><span class="dot"></span><b>0:00</b><span class="hint">‹ влево — отмена</span></div>
+        <button type="button" class="wb mic" aria-label="Голосовое (удерживайте)">${ICON_MIC}</button>
+        <button class="send" aria-label="Отправить">${ICON_SEND}</button>
+      </form>`,
     scrollBottom: true,
+    patch: true,
     refresh() {
       const room = client.getRoom(id);
       if (!room) return '<div class="card muted">Загрузка…</div>';
@@ -393,10 +427,10 @@ const views = {
         if (e.getType() !== 'm.reaction' || e.isRedacted() || r?.rel_type !== 'm.annotation') continue;
         ((reacts[r.event_id] ||= {})[r.key] ||= []).push(e);
       }
-      let html = '<button class="more" data-act="more">Показать раньше</button>', day = '', prev = '';
+      let html = '<button class="more" data-key="more" data-act="more">Показать раньше</button>', day = '', prev = '';
       for (const ev of evs) {
         const d = dayLabel(ev.getTs());
-        if (d !== day) { html += `<div class="day"><span>${d}</span></div>`; day = d; prev = ''; }
+        if (d !== day) { html += `<div class="day" data-key="d-${esc(d)}"><span>${d}</span></div>`; day = d; prev = ''; }
         const mine = ev.getSender() === me, first = ev.getSender() !== prev;
         prev = ev.getSender();
         const st = ev.status; // null = доставлено на сервер
@@ -411,11 +445,18 @@ const views = {
         const rx = reacts[ev.getId()];
         const rxHtml = rx ? `<div class="reacts">${Object.entries(rx).map(([k, list]) =>
           `<button class="react ${list.some((x) => x.getSender() === me) ? 'me' : ''}" data-act="react" data-id="${esc(ev.getId())}" data-key="${esc(k)}">${esc(k)}${list.length > 1 ? ' ' + list.length : ''}</button>`).join('')}</div>` : '';
-        html += `<div class="bubble ${mine ? 'mine' : ''} ${first ? 'first' : ''} ${isNew ? 'new' : ''} ${st === 'not_sent' ? 'failed' : ''}" data-id="${esc(ev.getId())}">
+        const media = MEDIA.includes(ev.getContent().msgtype) ? 'media' : '';
+        html += `<div class="msg ${mine ? 'mine' : ''}" data-key="${esc(evKey(ev))}">
+          <div class="bubble ${mine ? 'mine' : ''} ${first ? 'first' : ''} ${isNew ? 'new' : ''} ${media} ${st === 'not_sent' ? 'failed' : ''}" data-id="${esc(ev.getId())}">
           ${!mine && first && group ? `<b>${esc(sender(ev))}</b>` : ''}${quote}<span class="text">${body(ev)}</span><small>${hm(ev.getTs())}${tick}</small>
-          ${st === 'not_sent' ? `<button class="resend" data-act="resend" data-id="${esc(ev.getId())}">Не отправлено · повторить</button>` : ''}</div>${rxHtml ? `<div class="rxwrap ${mine ? 'mine' : ''}">${rxHtml}</div>` : ''}`;
+          ${st === 'not_sent' ? `<button class="resend" data-act="resend" data-id="${esc(ev.getId())}">Не отправлено · повторить</button>` : ''}</div>${rxHtml ? `<div class="rxwrap">${rxHtml}</div>` : ''}</div>`;
       }
-      if (!evs.length) html += '<p class="muted empty">Сообщений пока нет. Напишите первым!</p>';
+      for (const [k, u] of uploads) {
+        if (u.roomId !== id) continue;
+        html += `<div class="msg mine" data-key="up-${k}"><div class="bubble mine upload"><span class="text">${esc(u.label)}</span>
+          <div class="prog"><i style="width:${Math.round(u.p * 100)}%"></i></div></div></div>`;
+      }
+      if (!evs.length && !uploads.size) html += '<p class="muted empty" data-key="empty">Сообщений пока нет. Напишите первым!</p>';
       this.keys = new Set(evs.map(evKey));
       return html;
     },
@@ -497,9 +538,202 @@ function route() {
   document.getElementById('bar').innerHTML = view.bar || '';
   replyTo = null;
   closeSheet();
+  closeRound();
+  document.getElementById('viewer')?.remove();
   document.querySelectorAll('.drawer a').forEach((a) => a.classList.toggle('sel', a.getAttribute('href') === '#/' + (name || 'wall')));
   refresh(true);
   view.after?.();
+}
+
+// Обновляем только изменившиеся сообщения: играющее голосовое или видео не прерывается
+function patchList(list, html) {
+  const tmp = document.createElement('div');
+  tmp.innerHTML = html;
+  const old = new Map();
+  for (const n of list.children) if (n.dataset.key) old.set(n.dataset.key, n);
+  const next = [...tmp.children].map((n) => {
+    const o = n.dataset.key && old.get(n.dataset.key);
+    if (o && o._src === n.outerHTML) return o;
+    n._src = n.outerHTML;
+    return n;
+  });
+  list.replaceChildren(...next);
+}
+// подгрузка фото/видео/голосовых (расшифровка при необходимости)
+function hydrate(root) {
+  for (const el of root.querySelectorAll('[data-media]:not([data-ready])')) {
+    el.dataset.ready = '1';
+    const c = mediaEvents.get(el.dataset.media);
+    if (!c || el.classList.contains('file')) continue;
+    mediaUrl(client, c).then((url) => {
+      if (!el.classList.contains('voice')) { el.src = el.tagName === 'VIDEO' ? url + '#t=0.1' : url; return; }
+      const a = new Audio(url);
+      el._audio = a;
+      const bar = el.querySelector('.wave i'), t = el.querySelector('small'), btn = el.querySelector('button');
+      const total = () => (isFinite(a.duration) && a.duration ? a.duration : (c.info?.duration || 1000) / 1000);
+      a.ontimeupdate = () => { bar.style.width = Math.min(100, (a.currentTime / total()) * 100) + '%'; t.textContent = fmtDur(a.currentTime * 1000); };
+      a.onplay = () => { btn.innerHTML = ICON_PAUSE; };
+      a.onpause = () => { btn.innerHTML = ICON_PLAY; };
+      a.onended = () => { btn.innerHTML = ICON_PLAY; bar.style.width = '0'; t.textContent = fmtDur(c.info?.duration); };
+    }).catch(() => el.classList.add('broken'));
+  }
+}
+// перед воспроизведением — остановить всё остальное (и радио)
+function pauseAllMedia(except) {
+  if (!audio.paused) audio.pause();
+  document.querySelectorAll('video').forEach((v) => { if (v !== except && !v.srcObject) v.pause(); });
+  document.querySelectorAll('.voice').forEach((v) => { if (v._audio && v._audio !== except) v._audio.pause(); });
+  document.querySelectorAll('.roundwrap.playing').forEach((w) => { if (w.querySelector('video') !== except) w.classList.remove('playing'); });
+}
+
+// ---------- отправка медиа ----------
+const uploads = new Map(); // идущие загрузки: показываем в чате с полоской прогресса
+let upSeq = 0;
+async function upload(roomId, spec, label) {
+  const k = ++upSeq;
+  uploads.set(k, { roomId, label, p: 0 });
+  stickBottom = true;
+  scheduleRefresh();
+  try {
+    await sendMedia(client, roomId, spec, (p) => { const u = uploads.get(k); if (u) { u.p = p; scheduleRefresh(); } });
+    sound('send');
+  } catch (e) { alert('Не отправлено: ' + e.message); }
+  finally { uploads.delete(k); scheduleRefresh(); }
+}
+function pickFiles(accept, cb) {
+  const i = document.createElement('input');
+  i.type = 'file';
+  if (accept) i.accept = accept;
+  i.onchange = () => { if (i.files[0]) cb(i.files[0]); };
+  i.click();
+}
+async function onPickedMedia(file) {
+  const roomId = view_arg();
+  if (file.type.startsWith('image/')) {
+    const { blob, w, h } = await prepareImage(file).catch(() => ({ blob: file, w: 0, h: 0 }));
+    upload(roomId, { blob, msgtype: 'm.image', name: file.type === 'image/gif' ? file.name : 'photo.jpg', info: w ? { w, h } : {} }, '📷 Фото');
+  } else if (file.type.startsWith('video/')) {
+    upload(roomId, { blob: file, msgtype: 'm.video', name: file.name || 'video.mp4', info: await videoMeta(file) }, '🎥 Видео · ' + mb(file.size));
+  } else onPickedFile(file);
+}
+function onPickedFile(file) {
+  upload(view_arg(), { blob: file, msgtype: 'm.file', name: file.name || 'file' }, '📎 ' + (file.name || 'Файл'));
+}
+function openViewer(src) {
+  const d = document.createElement('div');
+  d.id = 'viewer';
+  d.dataset.act = 'closeviewer';
+  d.innerHTML = `<img src="${esc(src)}" alt="">`;
+  document.body.append(d);
+}
+
+// голосовое: удерживать 🎤, отпустить — отправить, увести влево — отмена
+let voiceRec = null;
+document.addEventListener('pointerdown', async (e) => {
+  const btn = e.target.closest('.writebar .mic');
+  if (!btn) return;
+  e.preventDefault();
+  const s = voiceRec = { x: e.clientX, cancel: false, btn, pending: true };
+  try { btn.setPointerCapture(e.pointerId); } catch {}
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+  catch { voiceRec = null; return toast('Нет доступа к микрофону', 'Разрешите микрофон для «Юрт»'); }
+  if (voiceRec !== s) { stream.getTracks().forEach((t) => t.stop()); return toast('Удерживайте 🎤', 'Запись идёт, пока палец на кнопке'); }
+  pauseAllMedia();
+  s.stream = stream;
+  s.rec = record(stream, ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm'], { audioBitsPerSecond: 48000 });
+  s.pending = false;
+  const wb = btn.closest('.writebar');
+  wb.classList.add('recording');
+  s.timer = setInterval(() => {
+    const t = Date.now() - s.rec.started;
+    wb.querySelector('.recinfo b').textContent = fmtDur(t);
+    if (t > 5 * 60000) finishVoice(true);
+  }, 200);
+  navigator.vibrate?.(15);
+});
+document.addEventListener('pointermove', (e) => {
+  if (!voiceRec || voiceRec.pending) return;
+  voiceRec.cancel = e.clientX - voiceRec.x < -80;
+  voiceRec.btn.closest('.writebar')?.classList.toggle('cancel', voiceRec.cancel);
+});
+document.addEventListener('pointerup', () => { if (voiceRec) finishVoice(!voiceRec.cancel); });
+document.addEventListener('pointercancel', () => { if (voiceRec) finishVoice(false); });
+async function finishVoice(send) {
+  const s = voiceRec;
+  voiceRec = null;
+  if (!s || s.pending) return;
+  clearInterval(s.timer);
+  s.btn.closest('.writebar')?.classList.remove('recording', 'cancel');
+  const r = await s.rec.stop(send);
+  s.stream.getTracks().forEach((t) => t.stop());
+  if (!r) return;
+  if (r.duration < 800) return toast('Слишком коротко', 'Удерживайте 🎤 и говорите');
+  upload(view_arg(), {
+    blob: r.blob, msgtype: 'm.audio', name: 'voice.' + (r.blob.type.includes('mp4') ? 'm4a' : 'webm'),
+    info: { duration: r.duration },
+    extra: { 'org.matrix.msc3245.voice': {}, 'org.matrix.msc1767.audio': { duration: r.duration } },
+  }, '🎤 Голосовое');
+}
+
+// видео-кружок: превью с фронтальной камеры, до 1 минуты, сжатое качество
+let round = null;
+async function openRound() {
+  const ov = document.createElement('div');
+  ov.id = 'recorder';
+  ov.innerHTML = `<div class="rec-circle"><video autoplay playsinline muted></video>
+      <svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="48"/></svg></div>
+    <div class="rec-time">0:00 / 1:00</div>
+    <div class="rec-btns"><button data-act="roundcancel" aria-label="Отмена">✕</button>
+      <button class="rec-main" data-act="roundrec" aria-label="Запись"></button><span></span></div>
+    <p class="rec-hint">Нажмите красную кнопку — начать. Ещё раз — отправить.</p>`;
+  document.body.append(ov);
+  round = { ov };
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'user', width: { ideal: 480 }, height: { ideal: 480 } }, audio: true });
+    if (round?.ov !== ov) return stream.getTracks().forEach((t) => t.stop());
+    round.stream = stream;
+    ov.querySelector('video').srcObject = stream;
+    pauseAllMedia();
+  } catch { closeRound(); toast('Нет доступа к камере', 'Разрешите камеру и микрофон для «Юрт»'); }
+}
+function toggleRoundRec() {
+  if (!round?.stream) return;
+  if (round.rec) return finishRound();
+  const r = round;
+  r.rec = record(r.stream, ['video/mp4', 'video/webm;codecs=vp8,opus', 'video/webm'], { videoBitsPerSecond: 800000, audioBitsPerSecond: 64000 });
+  r.ov.classList.add('recording');
+  r.timer = setInterval(() => {
+    const t = Date.now() - r.rec.started;
+    r.ov.querySelector('.rec-time').textContent = fmtDur(t) + ' / 1:00';
+    r.ov.querySelector('circle').style.strokeDashoffset = 301.6 * (1 - Math.min(1, t / 60000));
+    if (t >= 60000 && round === r) finishRound();
+  }, 200);
+}
+async function finishRound() {
+  const r = round;
+  round = null;
+  clearInterval(r.timer);
+  const set = r.stream.getVideoTracks()[0]?.getSettings() || {};
+  r.ov.classList.add('sending');
+  const res = await r.rec.stop(true);
+  r.stream.getTracks().forEach((t) => t.stop());
+  r.ov.remove();
+  if (!res || res.duration < 1000) return;
+  upload(view_arg(), {
+    blob: res.blob, msgtype: 'm.video', name: 'round.' + (res.blob.type.includes('mp4') ? 'mp4' : 'webm'),
+    info: { duration: res.duration, w: set.width || 480, h: set.height || 480 }, extra: { 'yurt.round': true },
+  }, '🎥 Видео-кружок');
+}
+function closeRound() {
+  const r = round;
+  round = null;
+  document.getElementById('recorder')?.remove();
+  if (!r) return;
+  clearInterval(r.timer);
+  r.rec?.stop(false);
+  r.stream?.getTracks().forEach((t) => t.stop());
 }
 
 let timer = null;
@@ -521,7 +755,8 @@ function refresh(first) {
   const html = view.refresh();
   if (html === view.lastHtml && !first) return;
   view.lastHtml = html;
-  list.innerHTML = html;
+  if (view.patch) patchList(list, html); else list.innerHTML = html;
+  hydrate(list);
   if (full && ((view.scrollBottom && (first || atBottom)) || stickBottom)) sc.scrollTop = sc.scrollHeight;
   stickBottom = false;
 }
@@ -561,6 +796,42 @@ const actions = {
   },
   // меню сообщения
   closesheet: () => closeSheet(),
+  // медиа
+  attach: () => openSheet(`
+    <button data-act="pickmedia">📷 Фото или видео</button>
+    <button data-act="round">🎥 Видео-кружок</button>
+    <button data-act="pickfile">📎 Файл</button>
+    <button class="cancel" data-act="closesheet">Отмена</button>`),
+  pickmedia: () => { closeSheet(); pickFiles('image/*,video/*', onPickedMedia); },
+  pickfile: () => { closeSheet(); pickFiles('', onPickedFile); },
+  round: () => { closeSheet(); openRound(); },
+  roundrec: () => toggleRoundRec(),
+  roundcancel: () => closeRound(),
+  voice: (el) => {
+    const a = el.closest('.voice')?._audio;
+    if (!a) return;
+    if (a.paused) { pauseAllMedia(a); a.play(); } else a.pause();
+  },
+  playvideo: (el) => {
+    const v = el.querySelector('video');
+    if (!v?.src) return;
+    if (v.paused || v.muted) { pauseAllMedia(v); v.muted = false; v.play(); el.classList.add('playing'); }
+    else { v.pause(); el.classList.remove('playing'); }
+  },
+  photo: (el) => { if (el.src) openViewer(el.src); },
+  closeviewer: () => document.getElementById('viewer')?.remove(),
+  openfile: async (el) => {
+    const c = mediaEvents.get(el.dataset.media);
+    if (!c) return;
+    el.classList.add('loading');
+    try {
+      const a = document.createElement('a');
+      a.href = await mediaUrl(client, c);
+      a.download = c.body || 'file';
+      document.body.append(a); a.click(); a.remove();
+    } catch (e) { alert('Не удалось скачать: ' + e.message); }
+    el.classList.remove('loading');
+  },
   reply: (el) => { closeSheet(); startReply(el.dataset.id); },
   cancelreply: () => { replyTo = null; showReply(); },
   copy: (el) => {
@@ -648,6 +919,7 @@ document.addEventListener('submit', async (e) => {
   // сообщения: поле очищается сразу, сообщение появляется с часиками
   if (['msg', 'comment'].includes(f.dataset.form)) {
     input.value = '';
+    f.classList.remove('has-text');
     sound('send');
     stickBottom = true;
     if (f.dataset.form === 'msg') client.sendTyping(view_arg(), false).catch(() => {});
@@ -700,17 +972,18 @@ function openMsgMenu(id) {
   const ev = findEv(id);
   if (!ev || ev.status) return;
   const mine = ev.getSender() === client.getUserId();
-  closeSheet();
-  const d = document.createElement('div');
-  d.id = 'sheet';
-  d.innerHTML = `<div class="sheet-shade" data-act="closesheet"></div>
-    <div class="sheet">
+  openSheet(`
       <div class="quick">${QUICK.map((k) => `<button data-act="react" data-id="${esc(id)}" data-key="${k}">${k}</button>`).join('')}</div>
       <button data-act="reply" data-id="${esc(id)}">Ответить</button>
       <button data-act="copy" data-id="${esc(id)}">Копировать</button>
       ${mine ? `<button class="danger" data-act="redact" data-id="${esc(id)}">Удалить</button>` : ''}
-      <button class="cancel" data-act="closesheet">Отмена</button>
-    </div>`;
+      <button class="cancel" data-act="closesheet">Отмена</button>`);
+}
+function openSheet(inner) {
+  closeSheet();
+  const d = document.createElement('div');
+  d.id = 'sheet';
+  d.innerHTML = `<div class="sheet-shade" data-act="closesheet"></div><div class="sheet">${inner}</div>`;
   document.body.append(d);
   requestAnimationFrame(() => d.classList.add('open'));
 }
@@ -720,7 +993,7 @@ function closeSheet() { document.getElementById('sheet')?.remove(); }
 let lp = null;
 document.addEventListener('touchstart', (e) => {
   const b = e.target.closest('.bubble[data-id]');
-  if (!b || e.target.closest('[data-act], a')) return;
+  if (!b || e.target.closest('button, a, video[controls], .roundwrap')) return;
   const t = e.touches[0];
   lp = { b, x: t.clientX, y: t.clientY, fired: false, swipe: false, dx: 0 };
   lp.timer = setTimeout(() => { lp.fired = true; navigator.vibrate?.(10); openMsgMenu(b.dataset.id); }, 450);
@@ -774,9 +1047,14 @@ document.addEventListener('focusout', () => setTimeout(() => {
 // кнопка «отправить» не убирает клавиатуру
 document.addEventListener('mousedown', (e) => { if (e.target.closest('.writebar button')) e.preventDefault(); });
 document.addEventListener('touchend', (e) => {
-  const b = e.target.closest('.writebar button');
+  const b = e.target.closest('.writebar button:not([type=button])');
   if (b) { e.preventDefault(); b.form.requestSubmit(); }
 }, { passive: false });
+// есть текст — кнопка «отправить», нет — микрофон
+document.addEventListener('input', (e) => {
+  const wb = e.target.closest('.writebar');
+  if (wb) wb.classList.toggle('has-text', !!e.target.value.trim());
+});
 // «печатает…»
 let typingAt = 0;
 document.addEventListener('input', (e) => {
@@ -819,7 +1097,7 @@ function incoming(ev, room) {
   if (!document.hidden && location.hash === href) return sound('soft');
   const name = sender(ev);
   const title = wall ? name + ' · Стена' : room.getJoinedMemberCount() > 2 ? `${name} · ${room.name}` : name;
-  const text = ev.getContent().body || '';
+  const text = plain(ev);
   sound('in');
   if (document.hidden) systemNotify(title, text, room.roomId);
   else toast(title, text, href);
