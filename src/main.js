@@ -121,7 +121,12 @@ const views = {
 
   chats: () => ({
     title: 'Сообщения',
-    html: '<div id="list"></div>',
+    html: `
+      <form class="card newchat" data-form="newchat">
+        <input name="text" autocomplete="off" autocapitalize="off" placeholder="Логин, например yurt02">
+        <button class="btn">Написать</button>
+      </form>
+      <div id="list"></div>`,
     refresh() {
       const invites = client.getRooms().filter((r) => r.getMyMembership() === 'invite').map((r) => `
         <div class="row invite">${avatar(r.roomId, r.name)}<div class="grow"><b>${esc(r.name)}</b><small>Приглашение</small></div>
@@ -144,7 +149,8 @@ const views = {
       <form class="writebar" data-form="msg"><input name="text" autocomplete="off" placeholder="Сообщение…"><button>➤</button></form>`,
     refresh() {
       const room = client.getRoom(id);
-      if (!room) return '<div class="card muted">Чат не найден</div>';
+      if (!room) return '<div class="card muted">Загрузка…</div>';
+      document.getElementById('title').textContent = room.name;
       const evs = timeline(room);
       const last = evs.at(-1);
       if (last) client.sendReadReceipt(last).catch(() => {});
@@ -237,6 +243,24 @@ const forms = {
     view.load();
   },
   msg: (text) => client.sendTextMessage(view_arg(), text),
+  newchat: async (text) => {
+    let id = text.trim().toLowerCase().replace(/^@/, '');
+    if (!id.includes(':')) id += ':matrix.org';
+    id = '@' + id;
+    if (id === client.getUserId()) throw new Error('это ваш собственный логин');
+    try { await client.getProfileInfo(id); }
+    catch (e) { if (e.errcode === 'M_NOT_FOUND') throw new Error('пользователь ' + id + ' не найден'); }
+    // уже есть диалог с ним — просто открываем
+    const direct = client.getAccountData('m.direct')?.getContent() || {};
+    const existing = (direct[id] || []).find((rid) => client.getRoom(rid)?.getMyMembership() === 'join');
+    if (existing) return go('#/chat/' + encodeURIComponent(existing));
+    const { room_id } = await client.createRoom({
+      is_direct: true, invite: [id], preset: 'trusted_private_chat',
+      initial_state: [{ type: 'm.room.encryption', state_key: '', content: { algorithm: 'm.megolm.v1.aes-sha2' } }],
+    });
+    await client.setAccountData('m.direct', { ...direct, [id]: [...(direct[id] || []), room_id] });
+    go('#/chat/' + encodeURIComponent(room_id));
+  },
   name: async (text) => { await client.setDisplayName(text); alert('Сохранено'); },
   recovery: async (text) => {
     try { await useRecoveryKey(client, text); alert('Готово! Ключ применён.'); route(); }

@@ -58,6 +58,8 @@ main { max-width: 640px; margin: 0 auto; padding: 8px 8px 72px; }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; margin-bottom: 8px; }
 .card .btn { margin-top: 8px; }
 .newpost { display: flex; flex-direction: column; align-items: flex-end; }
+.newchat { display: flex; gap: 8px; }
+.newchat .btn { margin: 0; white-space: nowrap; }
 
 .ava { flex: none; width: 40px; height: 40px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; color: #fff; font-weight: 700; }
 .post .head { display: flex; gap: 10px; align-items: center; margin-bottom: 8px; }
