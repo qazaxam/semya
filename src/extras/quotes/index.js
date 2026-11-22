@@ -3,6 +3,7 @@
 // комнате Matrix «Цитаты». Лайк = реакция ❤️, «Мне понравилось» = мои ❤️.
 
 import './style.css';
+import { SEED } from './seed.js';
 
 export const QUOTES_ROOM = 'Цитаты';
 const HEART = '❤️';
@@ -32,7 +33,17 @@ const keyOf = (e) => `${e.section}::${e.title}`;
 function posts(room) {
   return room.getLiveTimeline().getEvents()
     .filter((e) => !e.isRedacted() && e.getContent()['yurt.quote'])
-    .map((e) => ({ ev: e, ...e.getContent()['yurt.quote'] }));
+    .map((e) => ({ ...e.getContent()['yurt.quote'], likeId: e.getId() }));
+}
+// Пока заметки не загружены — стартовый набор; его лайки хранятся на устройстве
+const SEED_LS = 'yurt.quotes.seedlikes';
+const seedLikes = () => { try { return new Set(JSON.parse(localStorage.getItem(SEED_LS)) || []); } catch { return new Set(); } };
+const SEED_ITEMS = SEED.map((s) => ({ ...s, id: 'seed:' + s.title, likeId: 'seed:' + s.title }));
+function data(client) {
+  const room = quotesRoom(client);
+  const real = room ? posts(room) : [];
+  if (real.length) return { room, list: real, liked: new Set(myHearts(room, client.getUserId()).keys()), seed: false };
+  return { room, list: SEED_ITEMS, liked: seedLikes(), seed: true };
 }
 function myHearts(room, me) {
   const m = new Map(); // id события → моя реакция
@@ -119,19 +130,16 @@ function card(p, liked, esc, full = true) {
     <div class="qsec">${esc(p.section)}</div>
     ${p.title !== p.section ? `<h4>${esc(p.title)}</h4>` : ''}
     <div class="qtext ${full ? '' : 'short'}">${md(p.text, esc)}</div>
-    <button class="qlike ${liked ? 'on' : ''}" data-act="qlike" data-id="${esc(p.ev.getId())}">${liked ? '❤️' : '🤍'} Мне нравится</button>
+    <button class="qlike ${liked ? 'on' : ''}" data-act="qlike" data-id="${esc(p.likeId)}">${liked ? '❤️' : '🤍'} Мне нравится</button>
   </div>`;
 }
+const today = () => Number(new Date().toISOString().slice(0, 10).replace(/-/g, ''));
 
 // цитаты для ленты Стены (новый порядок каждый день)
 export function quotesForWall(ctx, limit = 12) {
-  const room = quotesRoom(ctx.client);
-  if (!room) return [`<a class="card qday" href="#/quotes"><div class="qsec">❝ Группа «${QUOTES_ROOM}»</div>
-    <div>Загрузите свои цитаты и заметки — они появятся здесь, на Стене.</div></a>`];
-  const hearts = myHearts(room, ctx.client.getUserId());
-  const day = Number(new Date().toISOString().slice(0, 10).replace(/-/g, ''));
-  return shuffled(posts(room), day + 7).slice(0, limit).map((p) =>
-    `<div class="qwall"><a class="qfrom" href="#/quotes"><span class="qava sm">❝</span>${QUOTES_ROOM}</a>${card(p, hearts.has(p.ev.getId()), ctx.esc)}</div>`);
+  const d = data(ctx.client);
+  return shuffled(d.list, today() + 7).slice(0, limit).map((p) =>
+    `<div class="qwall"><a class="qfrom" href="#/quotes"><span class="qava sm">❝</span>${QUOTES_ROOM}</a>${card(p, d.liked.has(p.likeId), ctx.esc)}</div>`);
 }
 // посты Стены вперемешку с цитатами: после каждых двух постов — цитата
 export function mixFeed(posts, quotes) {
@@ -139,16 +147,6 @@ export function mixFeed(posts, quotes) {
   let q = 0;
   posts.forEach((p, i) => { out.push(p); if (i % 2 === 1 && q < quotes.length) out.push(quotes[q++]); });
   return out.concat(quotes.slice(q));
-}
-
-// «Цитата дня» вверху Стены
-export function quoteOfDay(ctx) {
-  const room = quotesRoom(ctx.client);
-  if (!room) return '';
-  const c = carouselItem(carouselPool(posts(room)));
-  if (!c) return '';
-  return `<a class="card qday" href="#/quotes"><div class="qsec">❝ Цитата · группа «${QUOTES_ROOM}»</div>
-    <div class="qtext short">${md(c.item.text, ctx.esc)}</div></a>`;
 }
 
 // ---------- экран группы ----------
@@ -165,17 +163,13 @@ export function quotesView(ctx, tab) {
     q: '',
     refresh() {
       const { client, esc } = ctx;
-      const room = quotesRoom(client);
-      const head = (n) => `<div class="card qhead"><span class="qava">❝</span><div class="grow"><h2>${QUOTES_ROOM}</h2>
-        <small>Личная группа · ${n} записей · видна только вам</small></div></div>`;
-      if (!room) {
-        return head(0) + `<div class="card"><p>Здесь будут ваши цитаты и заметки. Загрузите файл заметок (.md):
-          разделы «## …» и записи «### …» станут постами группы.</p>
-          <p class="muted" id="qprog">Записи хранятся в вашей личной зашифрованной комнате, а не на сайте.</p>
-          <button class="btn" data-act="quotesimport">Загрузить заметки (.md)</button></div>`;
-      }
-      const all = posts(room);
-      const hearts = myHearts(room, client.getUserId());
+      const { list: all, liked: hearts, seed } = data(client);
+      const head = `<div class="card qhead"><span class="qava">❝</span><div class="grow"><h2>${QUOTES_ROOM}</h2>
+        <small>Личная группа · ${all.length} записей${seed ? ' · стартовый набор' : ' · видна только вам'}</small></div></div>`;
+      const importCard = seed ? `<div class="card"><p>Сейчас здесь стартовый набор цитат. Загрузите файл заметок (.md) —
+          все разделы станут постами группы в вашей личной зашифрованной комнате.</p>
+          <p class="muted" id="qprog"></p>
+          <button class="btn" data-act="quotesimport">Загрузить заметки (.md)</button></div>` : '';
       const c = carouselItem(carouselPool(all));
       const tabs = `<div class="qtabs"><a href="#/quotes" class="${tab !== 'fav' ? 'on' : ''}">Записи</a>
         <a href="#/quotes/fav" class="${tab === 'fav' ? 'on' : ''}">Мне понравилось · ${hearts.size}</a></div>`;
@@ -183,16 +177,16 @@ export function quotesView(ctx, tab) {
           <div class="qsec">❝ ${c.n} из ${c.total}</div>
           <div class="qtext">${md(c.item.text, esc)}</div>
           <div class="qnav"><button data-act="qprev" aria-label="Назад">‹</button>
-            <button class="qlike ${hearts.has(c.item.ev.getId()) ? 'on' : ''}" data-act="qlike" data-id="${esc(c.item.ev.getId())}">${hearts.has(c.item.ev.getId()) ? '❤️' : '🤍'}</button>
+            <button class="qlike ${hearts.has(c.item.likeId) ? 'on' : ''}" data-act="qlike" data-id="${esc(c.item.likeId)}">${hearts.has(c.item.likeId) ? '❤️' : '🤍'}</button>
             <button data-act="qnext" aria-label="Дальше">›</button></div></div>` : '';
-      let list = tab === 'fav' ? all.filter((p) => hearts.has(p.ev.getId()))
-        : shuffled(all, Number(new Date().toISOString().slice(0, 10).replace(/-/g, ''))); // новый порядок каждый день
+      let list = tab === 'fav' ? all.filter((p) => hearts.has(p.likeId)) : shuffled(all, today()); // новый порядок каждый день
       if (this.q) { const q = this.q.toLowerCase(); list = list.filter((p) => (p.title + ' ' + p.text).toLowerCase().includes(q)); }
       const shown = list.slice(0, this.limit);
-      return head(all.length) + (tab === 'fav' ? '' : carousel) + tabs
-        + (shown.map((p) => card(p, hearts.has(p.ev.getId()), esc)).join('')
+      return head + (tab === 'fav' ? '' : carousel) + tabs
+        + (shown.map((p) => card(p, hearts.has(p.likeId), esc)).join('')
           || `<div class="card muted">${tab === 'fav' ? 'Пока пусто. Нажмите 🤍 под записью — она появится здесь.' : 'Ничего не найдено'}</div>`)
-        + (list.length > shown.length ? `<button class="more" data-act="qmore">Показать ещё (${list.length - shown.length})</button>` : '');
+        + (list.length > shown.length ? `<button class="more" data-act="qmore">Показать ещё (${list.length - shown.length})</button>` : '')
+        + importCard;
     },
     after() {
       current = v;
@@ -200,9 +194,8 @@ export function quotesView(ctx, tab) {
       // карусель сама листается каждые 15 секунд, пока открыта группа
       auto = setInterval(() => {
         if (!location.hash.startsWith('#/quotes')) return clearInterval(auto);
-        const room = quotesRoom(ctx.client);
-        if (room && !document.hidden && !document.activeElement?.matches?.('.qsearch')) {
-          carouselItem(carouselPool(posts(room)), 1);
+        if (!document.hidden && !document.activeElement?.matches?.('.qsearch')) {
+          carouselItem(carouselPool(data(ctx.client).list), 1);
           ctx.rerender();
         }
       }, 15000);
@@ -222,11 +215,17 @@ document.addEventListener('input', (e) => {
 // ---------- кнопки ----------
 export function quoteActions(ctx) {
   return {
-    qnext: () => { carouselItem(carouselPool(posts(quotesRoom(ctx.client))), 1); ctx.rerender(); },
-    qprev: () => { carouselItem(carouselPool(posts(quotesRoom(ctx.client))), -1); ctx.rerender(); },
+    qnext: () => { carouselItem(carouselPool(data(ctx.client).list), 1); ctx.rerender(); },
+    qprev: () => { carouselItem(carouselPool(data(ctx.client).list), -1); ctx.rerender(); },
     qmore: () => { if (current) { current.limit += 15; ctx.rerender(); } },
     qlike: async (el) => {
       const { client } = ctx;
+      if (el.dataset.id.startsWith('seed:')) { // стартовый набор: лайк на устройстве
+        const s = seedLikes();
+        if (s.has(el.dataset.id)) s.delete(el.dataset.id); else { s.add(el.dataset.id); ctx.sound('send'); }
+        try { localStorage.setItem(SEED_LS, JSON.stringify([...s])); } catch {}
+        return ctx.rerender();
+      }
       const room = quotesRoom(client);
       const mine = myHearts(room, client.getUserId()).get(el.dataset.id);
       el.disabled = true;
