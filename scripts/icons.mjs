@@ -3,13 +3,14 @@ import sharp from 'sharp';
 import { readFileSync } from 'node:fs';
 
 const dir = 'public/icons/';
-const svg = readFileSync(dir + 'icon.svg');
+const rounded = readFileSync(dir + 'icon.svg', 'utf8');
+// квадрат без прозрачных углов: iPhone сам скругляет иконки и обложки плеера
+const square = Buffer.from(rounded.replace(/rx="\d+"/, 'rx="0"'));
+const png = (svg, size, name) => sharp(svg, { density: 300 }).resize(size, size).png().toFile(dir + name + '.png');
 
-for (const [name, size] of [['icon-192', 192], ['icon-512', 512], ['apple-touch-icon', 180]]) {
-  await sharp(svg, { density: 300 }).resize(size, size).png().toFile(`${dir}${name}.png`);
-}
-// maskable: иконка с полями (безопасная зона 80%) на цветном фоне
-const inner = await sharp(svg, { density: 300 }).resize(400, 400).png().toBuffer();
-await sharp({ create: { width: 512, height: 512, channels: 4, background: '#4a76a8' } })
-  .composite([{ input: inner, gravity: 'center' }]).png().toFile(dir + 'icon-maskable-512.png');
+await png(Buffer.from(rounded), 192, 'icon-192');
+await png(Buffer.from(rounded), 512, 'icon-512');
+await png(square, 180, 'apple-touch-icon');
+await png(square, 512, 'icon-square-512');   // обложка радио на экране блокировки
+await png(square, 512, 'icon-maskable-512'); // Android: рисунок внутри безопасной зоны
 console.log('Иконки готовы');

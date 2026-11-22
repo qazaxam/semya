@@ -2,6 +2,7 @@ import './style.css';
 import { APP_NAME, WALL_ROOM_NAME, STATIONS } from './config.js';
 import { loadSession, startLogin, finishLogin, getAuthResponse, clearSession, redirectUri } from './auth.js';
 import { startMatrix, joinSpaceRooms, useRecoveryKey, isVerified, logout } from './matrix.js';
+import { unlockAudio, sound, soundOn, setSound, toast, notifyState, askNotify, systemNotify, registerSW, setBadge } from './notify.js';
 
 const $app = document.getElementById('app');
 let client = null;
@@ -24,6 +25,16 @@ function time(ts) {
   return d.toDateString() === now.toDateString() ? hm
     : d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }) + ' в ' + hm;
 }
+const hm = (ts) => new Date(ts).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+function dayLabel(ts) {
+  const d = new Date(ts).toDateString(), now = new Date();
+  if (d === now.toDateString()) return 'Сегодня';
+  now.setDate(now.getDate() - 1);
+  if (d === now.toDateString()) return 'Вчера';
+  return new Date(ts).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
+}
+// ключ сообщения не меняется, когда «отправляется» превращается в «отправлено»
+const evKey = (ev) => ev.getUnsigned()?.transaction_id || ev.getTxnId?.() || ev.getId();
 const isMsg = (ev) => ['m.room.message', 'm.room.encrypted'].includes(ev.getType())
   && !ev.isRedacted() && ev.getRelation()?.rel_type !== 'm.replace';
 function body(ev) {
@@ -61,7 +72,7 @@ function layout() {
     <div class="sticky">
       <header class="top">
         <button class="burger" data-act="menu" aria-label="Меню">☰</button>
-        <div class="title" id="title"></div>
+        <div class="title"><span id="title"></span><small id="subtitle"></small></div>
         <a class="hbtn" href="#/search" aria-label="Поиск">${ICON_SEARCH}</a>
         <button class="hbtn" data-act="reload" aria-label="Обновить">${ICON_RELOAD}</button>
       </header>
@@ -79,11 +90,19 @@ function layout() {
       <a href="#/settings">Настройки</a>
     </nav>
     <div class="shade" data-act="menu"></div>
-    <main id="view"></main>`;
+    <main id="view"></main>
+    <div id="bar"></div>
+    <div id="toast" class="toast"></div>`;
+}
+function setTitle(t, sub = '') {
+  document.getElementById('title').textContent = t;
+  document.getElementById('subtitle').textContent = sub;
 }
 const toggleMenu = (open) => document.body.classList.toggle('menu-open', open);
 const ICON_SEARCH = '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 21 21"/></svg>';
 const ICON_RELOAD = '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 4v5h-5"/></svg>';
+const ICON_SEND = '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6 3.4 10l12.6 2-12.6 2z"/></svg>';
+const ICON_CLOCK = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>';
 
 // ---------- друзья = личные диалоги (m.direct) ----------
 function normId(t) {
@@ -158,7 +177,7 @@ function setMediaInfo() {
   navigator.mediaSession.metadata = new MediaMetadata({
     title: STATIONS[station][0],
     artist: 'Радио · ' + APP_NAME,
-    artwork: [{ src: new URL('./icons/icon-512.png', location.href).href, sizes: '512x512', type: 'image/png' }],
+    artwork: [{ src: new URL('./icons/icon-square-512.png', location.href).href, sizes: '512x512', type: 'image/png' }],
   });
 }
 if ('mediaSession' in navigator) {
@@ -207,8 +226,8 @@ const views = {
 
   post: (id) => ({
     title: 'Комментарии',
-    html: `<div id="list"></div>
-      <form class="writebar" data-form="comment"><input name="text" autocomplete="off" placeholder="Комментарий…"><button>➤</button></form>`,
+    html: '<div id="list"></div>',
+    bar: `<form class="writebar" data-form="comment"><input name="text" autocomplete="off" enterkeyhint="send" placeholder="Комментарий…"><button aria-label="Отправить">${ICON_SEND}</button></form>`,
     async load() {
       const room = wallRoom(); if (!room) return;
       const r = await client.relations(room.roomId, id, 'm.thread', null, { limit: 100 });
@@ -338,22 +357,38 @@ const views = {
 
   chat: (id) => ({
     title: client.getRoom(id)?.name || 'Чат',
-    html: `<div id="list" class="chat"></div>
-      <form class="writebar" data-form="msg"><input name="text" autocomplete="off" placeholder="Сообщение…"><button>➤</button></form>`,
+    html: '<div id="list" class="chat"></div>',
+    bar: `<form class="writebar" data-form="msg"><input name="text" autocomplete="off" enterkeyhint="send" placeholder="Сообщение…"><button aria-label="Отправить">${ICON_SEND}</button></form>`,
+    scrollBottom: true,
     refresh() {
       const room = client.getRoom(id);
       if (!room) return '<div class="card muted">Загрузка…</div>';
-      document.getElementById('title').textContent = room.name;
-      const evs = timeline(room);
-      const last = evs.at(-1);
-      if (last) client.sendReadReceipt(last).catch(() => {});
       const me = client.getUserId();
-      return `<button class="more" data-act="more">Ранее</button>` + evs.map((ev) => `
-        <div class="bubble ${ev.getSender() === me ? 'mine' : ''}">
-          ${ev.getSender() === me ? '' : `<b>${esc(sender(ev))}</b>`}
-          <div class="text">${body(ev)}</div><small>${time(ev.getTs())}</small></div>`).join('');
+      const group = room.getJoinedMemberCount() > 2;
+      const typing = room.getMembers().filter((m) => m.typing && m.userId !== me);
+      setTitle(room.name, typing.length ? (group ? typing.map((m) => m.name).join(', ') + ' печатает…' : 'печатает…') : '');
+      const evs = timeline(room);
+      const lastIn = [...evs].reverse().find((e) => !e.status);
+      if (lastIn && !document.hidden) client.sendReadReceipt(lastIn).catch(() => {});
+      let html = '<button class="more" data-act="more">Показать раньше</button>', day = '', prev = '';
+      for (const ev of evs) {
+        const d = dayLabel(ev.getTs());
+        if (d !== day) { html += `<div class="day"><span>${d}</span></div>`; day = d; prev = ''; }
+        const mine = ev.getSender() === me, first = ev.getSender() !== prev;
+        prev = ev.getSender();
+        const st = ev.status; // null = доставлено на сервер
+        const isNew = this.keys && !this.keys.has(evKey(ev));
+        const tick = !mine || st === 'not_sent' ? ''
+          : st ? `<i class="tick">${ICON_CLOCK}</i>`
+          : room.getUsersReadUpTo(ev).some((u) => u !== me) ? '<i class="tick read">✓✓</i>' : '<i class="tick">✓</i>';
+        html += `<div class="bubble ${mine ? 'mine' : ''} ${first ? 'first' : ''} ${isNew ? 'new' : ''} ${st === 'not_sent' ? 'failed' : ''}">
+          ${!mine && first && group ? `<b>${esc(sender(ev))}</b>` : ''}<span class="text">${body(ev)}</span><small>${hm(ev.getTs())}${tick}</small>
+          ${st === 'not_sent' ? `<button class="resend" data-act="resend" data-id="${esc(ev.getId())}">Не отправлено · повторить</button>` : ''}</div>`;
+      }
+      if (!evs.length) html += '<p class="muted empty">Сообщений пока нет. Напишите первым!</p>';
+      this.keys = new Set(evs.map(evKey));
+      return html;
     },
-    scrollBottom: true,
   }),
 
   settings: () => ({
@@ -372,8 +407,23 @@ const views = {
         <input name="text" autocomplete="off" placeholder="EsTc 1234 …">
         <button class="btn">Применить ключ</button>
       </form>
+      <div class="card">
+        <h3>Уведомления и звуки</h3>
+        <p class="muted" id="notifstate"></p>
+        <button class="btn" data-act="notify" id="notifbtn">Включить уведомления</button>
+        <label class="switch"><input type="checkbox" id="soundtoggle" ${soundOn() ? 'checked' : ''}> Звуки сообщений</label>
+      </div>
       <div class="card"><button class="btn gray" data-act="logout">Выйти</button></div>`,
     async after() {
+      const st = notifyState();
+      const ns = document.getElementById('notifstate');
+      ns.textContent = {
+        granted: '✅ Уведомления включены. Они приходят, пока «Юрт» открыт или свёрнут недавно.',
+        denied: 'Уведомления запрещены. Включите: Настройки iPhone → Уведомления → Юрт.',
+        unsupported: 'Чтобы включить уведомления, добавьте «Юрт» на экран «Домой» и откройте с иконки.',
+        default: 'Звук и плашка сверху работают всегда, пока приложение открыто.',
+      }[st];
+      document.getElementById('notifbtn').hidden = st !== 'default';
       const ok = await isVerified(client);
       const el = document.getElementById('verified');
       if (el) el.textContent = ok ? '✅ Устройство подтверждено' : '⚠️ Устройство не подтверждено — введите ключ.';
@@ -396,25 +446,36 @@ function route() {
   const [, name, ...rest] = location.hash.split('/');
   const make = views[name] || views.wall;
   view = make(decodeURIComponent(rest.join('/')));
-  document.getElementById('title').textContent = view.title;
-  document.getElementById('view').innerHTML = view.html;
+  // чат и комментарии — на весь экран: шапка сверху, поле ввода снизу
+  document.body.classList.toggle('fullscreen', ['chat', 'post'].includes(name));
+  setTitle(view.title);
+  const main = document.getElementById('view');
+  main.innerHTML = view.html;
+  main.scrollTop = 0;
+  scrollTo(0, 0);
+  document.getElementById('bar').innerHTML = view.bar || '';
   document.querySelectorAll('.drawer a').forEach((a) => a.classList.toggle('sel', a.getAttribute('href') === '#/' + (name || 'wall')));
   refresh(true);
   view.after?.();
 }
 
 let timer = null;
-function scheduleRefresh() { clearTimeout(timer); timer = setTimeout(() => refresh(false), 150); }
+let stickBottom = false; // после отправки — прокрутить вниз
+function scheduleRefresh() { clearTimeout(timer); timer = setTimeout(() => refresh(false), 100); }
 function refresh(first) {
   const unread = chatRooms().reduce((s, r) => s + r.getUnreadNotificationCount('total'), 0);
+  const nReq = friendRequests().length;
   const u = document.getElementById('unread'); if (u) u.textContent = unread || '';
-  const rq = document.getElementById('requests'); if (rq) rq.textContent = friendRequests().length || '';
+  const rq = document.getElementById('requests'); if (rq) rq.textContent = nReq || '';
+  setBadge(unread + nReq);
   const list = document.getElementById('list');
   if (!list || !view?.refresh) return;
-  const el = document.documentElement;
-  const atBottom = el.scrollHeight - scrollY - innerHeight < 80;
+  const sc = document.getElementById('view');
+  const full = document.body.classList.contains('fullscreen');
+  const atBottom = full && sc.scrollHeight - sc.scrollTop - sc.clientHeight < 80;
   list.innerHTML = view.refresh();
-  if (view.scrollBottom && (first || atBottom)) scrollTo(0, el.scrollHeight);
+  if (full && ((view.scrollBottom && (first || atBottom)) || stickBottom)) sc.scrollTop = sc.scrollHeight;
+  stickBottom = false;
 }
 
 // ---------- действия ----------
@@ -424,7 +485,19 @@ const view_arg = () => decodeURIComponent(location.hash.split('/').slice(2).join
 const actions = {
   login: () => startLogin().catch((e) => showLogin('Не получилось: ' + e.message)),
   menu: () => toggleMenu(!document.body.classList.contains('menu-open')),
-  more: async () => { const r = currentRoom(); if (r) { await client.scrollback(r, 30); refresh(false); } },
+  more: async () => {
+    const r = currentRoom(); if (!r) return;
+    const sc = document.getElementById('view'), h = sc.scrollHeight;
+    await client.scrollback(r, 30);
+    refresh(false);
+    if (document.body.classList.contains('fullscreen')) sc.scrollTop += sc.scrollHeight - h; // остаться на месте
+  },
+  resend: (el) => {
+    const room = client.getRoom(view_arg());
+    const ev = room?.getLiveTimeline().getEvents().find((e) => e.getId() === el.dataset.id);
+    if (ev) client.resendEvent(ev, room).catch(() => {});
+  },
+  notify: async () => { await askNotify(); route(); },
   join: async (el) => { await client.joinRoom(el.dataset.id); await joinSpaceRooms(client); },
   leave: (el) => client.leave(el.dataset.id),
   reload: () => hardReload(),
@@ -478,6 +551,15 @@ document.addEventListener('submit', async (e) => {
   const input = f.elements.text;
   const text = input.value.trim();
   if (!text) return;
+  // сообщения: поле очищается сразу, сообщение появляется с часиками
+  if (['msg', 'comment'].includes(f.dataset.form)) {
+    input.value = '';
+    sound('send');
+    stickBottom = true;
+    if (f.dataset.form === 'msg') client.sendTyping(view_arg(), false).catch(() => {});
+    forms[f.dataset.form](text).catch((err) => alert('Не отправлено: ' + err.message));
+    return;
+  }
   const btn = f.querySelector('button'); btn.disabled = true;
   try {
     await forms[f.dataset.form](text);
@@ -485,6 +567,70 @@ document.addEventListener('submit', async (e) => {
   } catch (err) { alert('Не отправлено: ' + err.message); }
   btn.disabled = false;
 });
+
+// кнопка «отправить» не убирает клавиатуру
+document.addEventListener('mousedown', (e) => { if (e.target.closest('.writebar button')) e.preventDefault(); });
+document.addEventListener('touchend', (e) => {
+  const b = e.target.closest('.writebar button');
+  if (b) { e.preventDefault(); b.form.requestSubmit(); }
+}, { passive: false });
+// «печатает…»
+let typingAt = 0;
+document.addEventListener('input', (e) => {
+  if (!e.target.closest('.writebar[data-form="msg"]') || Date.now() - typingAt < 4000) return;
+  typingAt = Date.now();
+  client.sendTyping(view_arg(), true, 5000).catch(() => {});
+});
+document.addEventListener('change', (e) => {
+  if (e.target.id === 'soundtoggle') { setSound(e.target.checked); unlockAudio(); sound('in'); }
+});
+addEventListener('touchstart', unlockAudio, { passive: true });
+addEventListener('click', unlockAudio);
+
+// клавиатура iPhone: приложение занимает ровно видимую часть экрана
+function fitViewport() {
+  const vv = window.visualViewport;
+  if (!vv) return;
+  const sc = document.getElementById('view');
+  const near = sc && sc.scrollHeight - sc.scrollTop - sc.clientHeight < 120;
+  document.documentElement.style.setProperty('--vh', vv.height + 'px');
+  document.documentElement.style.setProperty('--vt', vv.offsetTop + 'px');
+  document.body.classList.toggle('kb', vv.height < innerHeight - 120);
+  if (near && document.body.classList.contains('fullscreen')) sc.scrollTop = sc.scrollHeight;
+}
+visualViewport?.addEventListener('resize', fitViewport);
+visualViewport?.addEventListener('scroll', fitViewport);
+fitViewport();
+
+// ---------- входящие: звук, плашка, уведомление ----------
+function onTimeline(ev, room, toStart, removed, data) {
+  if (toStart || !data?.liveEvent || !room || ev.getSender() === client.getUserId()) return;
+  if (!isMsg(ev) || ev.getTs() < Date.now() - 60000) return;
+  const fire = () => incoming(ev, room);
+  if (ev.getType() === 'm.room.encrypted' || ev.isBeingDecrypted()) ev.once('Event.decrypted', fire);
+  else fire();
+}
+function incoming(ev, room) {
+  if (ev.isDecryptionFailure()) return;
+  const wall = room === wallRoom();
+  const href = wall ? '#/wall' : '#/chat/' + encodeURIComponent(room.roomId);
+  if (!document.hidden && location.hash === href) return sound('soft');
+  const name = sender(ev);
+  const title = wall ? name + ' · Стена' : room.getJoinedMemberCount() > 2 ? `${name} · ${room.name}` : name;
+  const text = ev.getContent().body || '';
+  sound('in');
+  if (document.hidden) systemNotify(title, text, room.roomId);
+  else toast(title, text, href);
+}
+function onInvite(room, membership, prev) {
+  if (membership !== 'invite' || prev === 'invite') return;
+  const who = room.getDMInviter();
+  const title = who ? 'Новая заявка в друзья' : 'Приглашение: ' + room.name;
+  const text = who ? (room.getMember(who)?.name || who) : '';
+  sound('in');
+  if (document.hidden) systemNotify(title, text, room.roomId);
+  else toast(title, text, who ? '#/friends' : '#/chats');
+}
 
 // ---------- автообновление: если на сайте новая версия — перезагружаемся ----------
 async function checkUpdate() {
@@ -519,8 +665,9 @@ addEventListener('touchmove', (e) => {
   const drawer = document.getElementById('drawer');
   if (!g.mode) {
     if (Math.abs(g.dx) < 8 && Math.abs(g.dy) < 8) return;
-    if (Math.abs(g.dx) > Math.abs(g.dy)) g.mode = drawer && (g.open || g.x < 30) ? 'menu' : 'none';
-    else g.mode = !g.open && g.dy > 0 && scrollY <= 0 ? 'ptr' : 'none';
+    // меню двигается пальцем только когда открыто (свайп от края — это «назад» самого iPhone)
+    if (Math.abs(g.dx) > Math.abs(g.dy)) g.mode = drawer && g.open ? 'menu' : 'none';
+    else g.mode = !g.open && g.dy > 0 && scrollY <= 0 && !document.body.classList.contains('fullscreen') ? 'ptr' : 'none';
     if (g.mode === 'menu') document.body.classList.add('dragging');
   }
   if (g.mode === 'menu') {
@@ -575,8 +722,12 @@ async function boot() {
     return showLogin('Ошибка входа: ' + e.message);
   }
   client.on('Session.logged_out', () => { clearSession(); location.href = redirectUri; });
-  for (const ev of ['Room.timeline', 'Event.decrypted', 'Room', 'Room.myMembership', 'Room.name', 'Room.receipt', 'Thread.update', 'Thread.new'])
+  for (const ev of ['Room.timeline', 'Event.decrypted', 'Room', 'Room.myMembership', 'Room.name', 'Room.receipt',
+    'Room.localEchoUpdated', 'RoomMember.typing', 'Thread.update', 'Thread.new'])
     client.on(ev, scheduleRefresh);
+  client.on('Room.timeline', onTimeline);
+  client.on('Room.myMembership', onInvite);
+  registerSW();
   client.on('Room.myMembership', () => joinSpaceRooms(client));
   joinSpaceRooms(client);
   layout();
