@@ -262,13 +262,17 @@ body.kb .writebar { padding-bottom: 8px; }
 .rec-circle svg { position: absolute; inset: -6px; width: calc(100% + 12px); height: calc(100% + 12px); transform: rotate(-90deg); }
 .rec-circle circle { fill: none; stroke: #e0393e; stroke-width: 2.5; stroke-dasharray: 301.6; stroke-dashoffset: 301.6; transition: stroke-dashoffset .2s linear; }
 .rec-time { font-size: 18px; font-variant-numeric: tabular-nums; }
-.rec-btns { display: flex; align-items: center; gap: 40px; }
-.rec-btns > button:first-child { width: 52px; height: 52px; border-radius: 50%; border: 0; background: rgba(255,255,255,.15); color: #fff; font-size: 22px; }
-.rec-btns > span { width: 52px; }
-.rec-main { width: 76px; height: 76px; border-radius: 50%; border: 5px solid #fff; background: #e0393e; transition: border-radius .2s; }
-#recorder.recording .rec-main { border-radius: 22px; }
+#recorder.back .rec-circle video { transform: none; }
+.rec-btns { display: flex; align-items: flex-start; justify-content: center; gap: 34px; }
+.rec-btns button { border: 0; background: none; color: #fff; font: inherit; font-size: 13px; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.rec-side span { width: 52px; height: 52px; border-radius: 50%; background: rgba(255,255,255,.15); display: flex; align-items: center; justify-content: center; font-size: 22px; }
+.rec-main i { width: 76px; height: 76px; border-radius: 50%; border: 5px solid #fff; background: #e0393e; transition: all .2s; display: block; }
+#recorder.recording .rec-main i { background: #e0393e; border-radius: 22px; box-shadow: inset 0 0 0 18px #fff; }
+#recorder.recording .rec-side:last-child { opacity: .3; }
+.rec-label { font-weight: 600; }
 #recorder.sending { opacity: .6; pointer-events: none; }
-.rec-hint { color: rgba(255,255,255,.7); font-size: 14px; text-align: center; margin: 0; }
+.bubble.media .text { display: block; white-space: normal; }
+.bubble.media:has(.roundwrap) > small { float: none; display: flex; justify-content: flex-end; margin: 2px 4px 0; }
 
 .switch { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
 .switch input { width: 20px; height: 20px; }

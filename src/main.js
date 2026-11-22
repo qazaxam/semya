@@ -5,6 +5,7 @@ import { startMatrix, joinSpaceRooms, useRecoveryKey, isVerified, logout } from 
 import { unlockAudio, sound, soundOn, setSound, toast, notifyState, askNotify, systemNotify, registerSW, setBadge, enablePush, pushStatus, testPush } from './notify.js';
 import { PUSH_GATEWAY, VAPID_PUBLIC, DEVICE_NAME } from './config.js';
 import { sendMedia, mediaUrl, prepareImage, videoMeta, record, mb, fmtDur } from './media.js';
+import { exportArchive, toMarkdown, download } from './archive.js';
 const turnOnPush = () => enablePush(client, { gateway: PUSH_GATEWAY, vapidKey: VAPID_PUBLIC, appName: APP_NAME, deviceName: DEVICE_NAME });
 
 const $app = document.getElementById('app');
@@ -55,14 +56,15 @@ function mediaHtml(id, c) {
   const ar = i.w && i.h ? `aspect-ratio:${i.w}/${i.h}` : '';
   const a = esc(id);
   if (c.msgtype === 'm.image') return `<img class="photo" data-media="${a}" data-act="photo" alt="" style="${ar}">`;
-  if (c.msgtype === 'm.video' && c['yurt.round']) return `<div class="roundwrap" data-act="playvideo">
-    <video class="round" data-media="${a}" playsinline loop preload="metadata"></video>
-    <span class="playicon">${ICON_PLAY}</span><small class="dur">${fmtDur(i.duration)}</small></div>`;
+  // без переносов строк внутри: в пузыре включено «сохранять переводы строк», они сдвигали видео
+  if (c.msgtype === 'm.video' && c['yurt.round']) return `<div class="roundwrap" data-act="playvideo">`
+    + `<video class="round" data-media="${a}" playsinline preload="metadata"></video>`
+    + `<span class="playicon">${ICON_PLAY}</span><small class="dur">${fmtDur(i.duration)}</small></div>`;
   if (c.msgtype === 'm.video') return `<video class="video" data-media="${a}" playsinline controls preload="metadata" style="${ar}"></video>`;
-  if (c.msgtype === 'm.audio') return `<div class="voice" data-media="${a}"><button data-act="voice" aria-label="Слушать">${ICON_PLAY}</button>
-    <div class="wave"><i></i></div><small>${fmtDur(i.duration)}</small></div>`;
-  return `<button class="file" data-act="openfile" data-media="${a}"><span class="ficon">📎</span>
-    <span class="grow"><b>${esc(c.body)}</b><small>${i.size ? mb(i.size) : ''}</small></span></button>`;
+  if (c.msgtype === 'm.audio') return `<div class="voice" data-media="${a}"><button data-act="voice" aria-label="Слушать">${ICON_PLAY}</button>`
+    + `<div class="wave"><i></i></div><small>${fmtDur(i.duration)}</small></div>`;
+  return `<button class="file" data-act="openfile" data-media="${a}"><span class="ficon">📎</span>`
+    + `<span class="grow"><b>${esc(c.body)}</b><small>${i.size ? mb(i.size) : ''}</small></span></button>`;
 }
 // ссылки кликабельны (без превью: в зашифрованных чатах превью выключены ради приватности)
 const linkify = (html) => html.replace(/\bhttps?:\/\/[^\s<]+[^\s<.,:;!?)"'»]/g,
@@ -209,9 +211,18 @@ function playStation(i) {
   if (station === i && !audio.paused) audio.pause();
   else {
     if (station !== i) { audio.src = STATIONS[i][1]; station = i; setMediaInfo(); }
-    audio.play().catch((e) => alert('Станция не играет: ' + e.message));
+    tryPlay();
   }
   updatePlayer();
+}
+// iPhone прерывает play(), если звук был у другого плеера, — пробуем ещё раз
+async function tryPlay(retries = 3) {
+  try { await audio.play(); }
+  catch (e) {
+    if (e.name === 'AbortError' && retries) { await new Promise((r) => setTimeout(r, 500)); return tryPlay(retries - 1); }
+    if (e.name === 'AbortError') return;
+    toast('Радио не играет', e.name === 'NotAllowedError' ? 'Нажмите ▶ ещё раз' : 'Станция недоступна — попробуйте другую');
+  }
 }
 // экран блокировки / Пункт управления iPhone
 function setMediaInfo() {
@@ -245,6 +256,7 @@ function updatePlayer() {
   scheduleRefresh();
 }
 ['playing', 'pause', 'error'].forEach((e) => audio.addEventListener(e, updatePlayer));
+audio.addEventListener('error', () => { if (station !== null) toast('Станция недоступна', 'Попробуйте другую или позже'); });
 
 // ---------- экраны ----------
 const views = {
@@ -486,6 +498,13 @@ const views = {
         <button class="btn gray" data-act="testpush" id="testbtn" hidden>Прислать тестовое уведомление</button>
         <label class="switch"><input type="checkbox" id="soundtoggle" ${soundOn() ? 'checked' : ''}> Звуки сообщений</label>
       </div>
+      <div class="card">
+        <h3>Архив переписок</h3>
+        <p class="muted">Скачать все чаты в расшифрованном виде: файл для программ (.json) и текст для чтения (.md).
+          Удобнее делать на компьютере. ⚠️ Файл без шифрования — храните его у себя, не выкладывайте в интернет.</p>
+        <p class="muted" id="archstate"></p>
+        <button class="btn" data-act="archive">Скачать архив</button>
+      </div>
       <div class="card"><button class="btn gray" data-act="logout">Выйти</button></div>`,
     async after() {
       const st = notifyState();
@@ -566,7 +585,11 @@ function hydrate(root) {
     const c = mediaEvents.get(el.dataset.media);
     if (!c || el.classList.contains('file')) continue;
     mediaUrl(client, c).then((url) => {
-      if (!el.classList.contains('voice')) { el.src = el.tagName === 'VIDEO' ? url + '#t=0.1' : url; return; }
+      if (!el.classList.contains('voice')) {
+        el.src = el.tagName === 'VIDEO' ? url + '#t=0.1' : url;
+        if (el.classList.contains('round')) el.onended = () => el.parentElement?.classList.remove('playing'); // сыграл один раз
+        return;
+      }
       const a = new Audio(url);
       el._audio = a;
       const bar = el.querySelector('.wave i'), t = el.querySelector('small'), btn = el.querySelector('button');
@@ -600,11 +623,19 @@ async function upload(roomId, spec, label) {
   } catch (e) { alert('Не отправлено: ' + e.message); }
   finally { uploads.delete(k); scheduleRefresh(); }
 }
+// iPhone не сообщает о выбранном файле, если поле выбора не добавлено на страницу
 function pickFiles(accept, cb) {
   const i = document.createElement('input');
   i.type = 'file';
   if (accept) i.accept = accept;
-  i.onchange = () => { if (i.files[0]) cb(i.files[0]); };
+  i.style.display = 'none';
+  document.body.append(i);
+  i.addEventListener('change', async () => {
+    const f = i.files[0];
+    i.remove();
+    if (!f) return;
+    try { await cb(f); } catch (e) { alert('Не отправлено: ' + e.message); }
+  });
   i.click();
 }
 async function onPickedMedia(file) {
@@ -683,18 +714,26 @@ async function openRound() {
   ov.id = 'recorder';
   ov.innerHTML = `<div class="rec-circle"><video autoplay playsinline muted></video>
       <svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="48"/></svg></div>
-    <div class="rec-time">0:00 / 1:00</div>
-    <div class="rec-btns"><button data-act="roundcancel" aria-label="Отмена">✕</button>
-      <button class="rec-main" data-act="roundrec" aria-label="Запись"></button><span></span></div>
-    <p class="rec-hint">Нажмите красную кнопку — начать. Ещё раз — отправить.</p>`;
+    <div class="rec-time">до 1 минуты</div>
+    <div class="rec-btns">
+      <button class="rec-side" data-act="roundcancel"><span>✕</span>Отмена</button>
+      <button class="rec-main" data-act="roundrec"><i></i><span class="rec-label">Начать</span></button>
+      <button class="rec-side" data-act="roundflip"><span>⟲</span>Камера</button>
+    </div>`;
   document.body.append(ov);
-  round = { ov };
+  round = { ov, facing: 'user' };
+  await openCam(round);
+}
+// включить камеру (фронтальную или основную)
+async function openCam(r) {
+  r.stream?.getTracks().forEach((t) => t.stop());
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'user', width: { ideal: 480 }, height: { ideal: 480 } }, audio: true });
-    if (round?.ov !== ov) return stream.getTracks().forEach((t) => t.stop());
-    round.stream = stream;
-    ov.querySelector('video').srcObject = stream;
+      video: { facingMode: r.facing, width: { ideal: 480 }, height: { ideal: 480 } }, audio: true });
+    if (round !== r) return stream.getTracks().forEach((t) => t.stop());
+    r.stream = stream;
+    r.ov.querySelector('video').srcObject = stream;
+    r.ov.classList.toggle('back', r.facing === 'environment');
     pauseAllMedia();
   } catch { closeRound(); toast('Нет доступа к камере', 'Разрешите камеру и микрофон для «Юрт»'); }
 }
@@ -704,6 +743,7 @@ function toggleRoundRec() {
   const r = round;
   r.rec = record(r.stream, ['video/mp4', 'video/webm;codecs=vp8,opus', 'video/webm'], { videoBitsPerSecond: 800000, audioBitsPerSecond: 64000 });
   r.ov.classList.add('recording');
+  r.ov.querySelector('.rec-label').textContent = 'Отправить';
   r.timer = setInterval(() => {
     const t = Date.now() - r.rec.started;
     r.ov.querySelector('.rec-time').textContent = fmtDur(t) + ' / 1:00';
@@ -786,6 +826,19 @@ const actions = {
     try { await turnOnPush(); } catch (e) { alert('Уведомления: ' + e.message); }
     route();
   },
+  archive: async (el) => {
+    const st = document.getElementById('archstate');
+    el.disabled = true;
+    try {
+      const a = await exportArchive(client, (t) => { st.textContent = t; });
+      const day = new Date().toISOString().slice(0, 10);
+      download(`yurt-archive-${day}.json`, JSON.stringify(a, null, 2), 'application/json');
+      setTimeout(() => download(`yurt-archive-${day}.md`, toMarkdown(a), 'text/markdown'), 800);
+      const n = a.rooms.reduce((s, r) => s + r.messages.length, 0);
+      st.textContent = `✅ Готово: ${a.rooms.length} чатов, ${n} сообщений`;
+    } catch (e) { st.textContent = '⚠️ Ошибка: ' + e.message; }
+    el.disabled = false;
+  },
   testpush: async (el) => {
     el.disabled = true;
     try {
@@ -807,6 +860,11 @@ const actions = {
   round: () => { closeSheet(); openRound(); },
   roundrec: () => toggleRoundRec(),
   roundcancel: () => closeRound(),
+  roundflip: () => {
+    if (!round?.stream || round.rec) return; // во время записи камеру не меняем
+    round.facing = round.facing === 'user' ? 'environment' : 'user';
+    openCam(round);
+  },
   voice: (el) => {
     const a = el.closest('.voice')?._audio;
     if (!a) return;
