@@ -1,5 +1,5 @@
 import './style.css';
-import { APP_NAME, WALL_ROOM_NAME } from './config.js';
+import { APP_NAME, WALL_ROOM_NAME, STATIONS } from './config.js';
 import { loadSession, startLogin, finishLogin, getAuthResponse, clearSession, redirectUri } from './auth.js';
 import { startMatrix, joinSpaceRooms, useRecoveryKey, isVerified, logout } from './matrix.js';
 
@@ -12,10 +12,11 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const go = (hash) => { location.hash = hash; };
 const COLORS = ['#5b88bd', '#6a9e5b', '#c97b4a', '#9a6bb5', '#c45c6a', '#4a9a9a'];
-function avatar(id, name) {
+const userLink = (id) => '#/user/' + encodeURIComponent(id);
+function avatar(id, name, cls = '') {
   let h = 0; for (const ch of id) h = (h * 31 + ch.charCodeAt(0)) | 0;
   const letter = (name || id).replace(/^@/, '').charAt(0).toUpperCase();
-  return `<span class="ava" style="background:${COLORS[Math.abs(h) % COLORS.length]}">${esc(letter)}</span>`;
+  return `<span class="ava ${cls}" style="background:${COLORS[Math.abs(h) % COLORS.length]}">${esc(letter)}</span>`;
 }
 function time(ts) {
   const d = new Date(ts), now = new Date();
@@ -57,18 +58,23 @@ function showLogin(err) {
 // ---------- каркас ----------
 function layout() {
   $app.innerHTML = `
-    <header class="top">
-      <button class="burger" data-act="menu" aria-label="Меню">☰</button>
-      <div class="title" id="title"></div>
-      <a class="hbtn" href="#/search" aria-label="Поиск">${ICON_SEARCH}</a>
-      <button class="hbtn" data-act="reload" aria-label="Обновить">${ICON_RELOAD}</button>
-    </header>
+    <div class="sticky">
+      <header class="top">
+        <button class="burger" data-act="menu" aria-label="Меню">☰</button>
+        <div class="title" id="title"></div>
+        <a class="hbtn" href="#/search" aria-label="Поиск">${ICON_SEARCH}</a>
+        <button class="hbtn" data-act="reload" aria-label="Обновить">${ICON_RELOAD}</button>
+      </header>
+      <div id="player" class="player" hidden></div>
+    </div>
     <nav class="drawer" id="drawer">
-      <div class="me">${avatar(client.getUserId(), client.getUser(client.getUserId())?.displayName)}
-        <span>${esc(client.getUser(client.getUserId())?.displayName || client.getUserId())}</span></div>
+      <a class="me" href="#/user/me">${avatar(client.getUserId(), client.getUser(client.getUserId())?.displayName)}
+        <span>${esc(client.getUser(client.getUserId())?.displayName || client.getUserId())}</span></a>
+      <a href="#/user/me">Моя страница</a>
       <a href="#/wall">Стена</a>
       <a href="#/friends">Друзья <b id="requests"></b></a>
       <a href="#/chats">Сообщения <b id="unread"></b></a>
+      <a href="#/radio">Радио</a>
       <a href="#/search">Поиск</a>
       <a href="#/settings">Настройки</a>
     </nav>
@@ -129,8 +135,32 @@ async function searchPeople(term) {
   return [...res];
 }
 function personRow(id, name, right) {
-  return `<div class="row">${avatar(id, name)}<div class="grow"><b>${esc(name)}</b><small>${esc(id)}</small></div>${right}</div>`;
+  return `<div class="row"><a class="who" href="${userLink(id)}">${avatar(id, name)}<div class="grow"><b>${esc(name)}</b><small>${esc(id)}</small></div></a>${right}</div>`;
 }
+
+// ---------- радио: играет, пока переходишь по разделам ----------
+const audio = new Audio();
+let station = null;
+function playStation(i) {
+  if (station === i && !audio.paused) audio.pause();
+  else {
+    if (station !== i) { audio.src = STATIONS[i][1]; station = i; }
+    audio.play().catch((e) => alert('Станция не играет: ' + e.message));
+  }
+  updatePlayer();
+}
+function updatePlayer() {
+  const p = document.getElementById('player');
+  if (p) {
+    p.hidden = station === null;
+    if (station !== null) p.innerHTML = `
+      <button data-act="radiotoggle">${audio.paused ? '▶' : '❚❚'}</button>
+      <a href="#/radio">${esc(STATIONS[station][0])}</a>
+      <button data-act="radiostop">✕</button>`;
+  }
+  scheduleRefresh();
+}
+['playing', 'pause', 'error'].forEach((e) => audio.addEventListener(e, updatePlayer));
 
 // ---------- экраны ----------
 const views = {
@@ -216,6 +246,51 @@ const views = {
     },
   }),
 
+  user: (arg) => ({
+    title: 'Профиль',
+    html: '<div id="list"></div>',
+    refresh() {
+      const me = client.getUserId();
+      const id = !arg || arg === 'me' ? me : arg;
+      const isMe = id === me;
+      if (!this.name) {
+        this.name = client.getUser(id)?.displayName || id;
+        client.getProfileInfo(id).then((p) => { this.name = p.displayname || id; scheduleRefresh(); }).catch(() => {});
+      }
+      document.getElementById('title').textContent = isMe ? 'Моя страница' : this.name;
+      const f = friends().find((x) => x.id === id);
+      const req = friendRequests().find((r) => r.getDMInviter() === id);
+      const btn = isMe ? '<a class="btn gray" href="#/settings">Редактировать</a>'
+        : f?.status === 'friend' ? `<a class="btn" href="#/chat/${encodeURIComponent(f.room.roomId)}">Написать сообщение</a><small>✓ У вас в друзьях</small>`
+        : f?.status === 'sent' ? '<small>Заявка отправлена</small>'
+        : req ? `<button class="btn" data-act="acceptfriend" data-id="${esc(req.roomId)}">Принять заявку</button>`
+        : `<button class="btn" data-act="addfriend" data-id="${esc(id)}">Добавить в друзья</button>`;
+      const room = wallRoom();
+      const posts = room ? timeline(room).filter((e) => e.getSender() === id).reverse() : [];
+      const nFriends = friends().filter((x) => x.status === 'friend').length;
+      return `
+        <div class="card profile">${avatar(id, this.name, 'big')}
+          <div class="grow"><h2>${esc(this.name)}</h2><small>${esc(id)}</small><div class="pbtns">${btn}</div></div>
+        </div>
+        ${isMe ? `<a class="card counter" href="#/friends"><b>${nFriends}</b> ${nFriends === 1 ? 'друг' : 'друзей'}</a>` : ''}
+        <h4 class="sect">Записи на стене</h4>
+        ${posts.map((p) => post(p, true)).join('') || '<div class="card muted">Записей пока нет</div>'}`;
+    },
+  }),
+
+  radio: () => ({
+    title: 'Радио',
+    html: '<div id="list"></div>',
+    refresh() {
+      return STATIONS.map(([name], i) => {
+        const on = station === i && !audio.paused;
+        return `<button class="row station ${on ? 'on' : ''}" data-act="radio" data-id="${i}">
+          <span class="ava" style="background:${COLORS[i % COLORS.length]}">${on ? '❚❚' : '▶'}</span>
+          <div class="grow"><b>${esc(name)}</b><small>${on ? 'Играет' : 'Турция'}</small></div></button>`;
+      }).join('') + '<p class="muted pad">Музыка продолжает играть, пока вы переходите по разделам.</p>';
+    },
+  }),
+
   search: () => ({
     title: 'Поиск',
     html: `
@@ -286,7 +361,7 @@ const views = {
 function post(ev, withLink) {
   const n = commentsCount(ev);
   return `<div class="card post">
-    <div class="head">${avatar(ev.getSender(), sender(ev))}<div><b>${esc(sender(ev))}</b><small>${time(ev.getTs())}</small></div></div>
+    <a class="head" href="${userLink(ev.getSender())}">${avatar(ev.getSender(), sender(ev))}<div><b>${esc(sender(ev))}</b><small>${time(ev.getTs())}</small></div></a>
     <div class="text">${body(ev)}</div>
     ${withLink ? `<a class="foot" href="#/post/${encodeURIComponent(ev.getId())}">💬 Комментарии${n ? ' (' + n + ')' : ''}</a>` : ''}
   </div>`;
@@ -330,15 +405,20 @@ const actions = {
   join: async (el) => { await client.joinRoom(el.dataset.id); await joinSpaceRooms(client); },
   leave: (el) => client.leave(el.dataset.id),
   reload: () => hardReload(),
+  radio: (el) => playStation(+el.dataset.id),
+  radiotoggle: () => playStation(station),
+  radiostop: () => { audio.pause(); audio.removeAttribute('src'); station = null; updatePlayer(); },
   addfriend: async (el) => {
     el.disabled = true;
+    el.textContent = 'Отправляем…';
     try { await addFriend(el.dataset.id); el.outerHTML = '<small>заявка отправлена</small>'; }
-    catch (e) { el.disabled = false; alert('Не получилось: ' + e.message); }
+    catch (e) { el.disabled = false; el.textContent = 'Добавить в друзья'; alert('Не получилось: ' + e.message); }
   },
   acceptfriend: async (el) => {
     const r = client.getRoom(el.dataset.id);
     const inviter = r.getDMInviter();
     el.disabled = true;
+    el.textContent = 'Принимаем…';
     await client.joinRoom(r.roomId);
     await rememberDirect(inviter, r.roomId);
     go('#/chat/' + encodeURIComponent(r.roomId));
