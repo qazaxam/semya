@@ -1,0 +1,26 @@
+/* Группа «Цитаты» (src/extras/quotes). Удаляется вместе с папкой. */
+.qsearch { margin-bottom: 8px; border-radius: 20px; padding: 8px 14px; }
+.qhead { display: flex; gap: 12px; align-items: center; }
+.qhead h2 { margin: 0; font-size: 19px; }
+.qava { width: 56px; height: 56px; border-radius: 50%; background: var(--accent); color: #fff; font-size: 34px;
+  display: flex; align-items: center; justify-content: center; flex: none; font-family: Georgia, serif; }
+.qtabs { display: flex; gap: 4px; margin: 4px 0 8px; }
+.qtabs a { flex: 1; text-align: center; padding: 9px; border-radius: var(--radius); background: var(--card); border: 1px solid var(--line); color: var(--muted); }
+.qtabs a.on { color: var(--accent-dark); font-weight: 600; border-bottom: 2px solid var(--accent); }
+.qsec { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .03em; margin-bottom: 4px; }
+.qpost h4 { margin: 0 0 6px; color: var(--accent-dark); }
+.qtext { line-height: 1.45; }
+.qtext p { margin: 0 0 6px; }
+.qtext blockquote { margin: 4px 0 8px; padding: 2px 0 2px 12px; border-left: 3px solid var(--accent-light); font-style: italic; }
+.qtext ul { margin: 4px 0 8px; padding-left: 20px; }
+.qtext .qrow { font-size: 14px; }
+.qtext.short { max-height: 9.5em; overflow: hidden; -webkit-mask-image: linear-gradient(#000 70%, transparent); mask-image: linear-gradient(#000 70%, transparent); }
+.qlike { margin-top: 6px; border: 1px solid var(--line); background: #fff; color: var(--text); border-radius: 16px; padding: 5px 12px; font: inherit; font-size: 14px; }
+.qlike.on { border-color: #f2b8c6; background: #fdeef2; }
+.qcar { background: linear-gradient(135deg, #f4f8fc, #e9f0f8); border-color: #cfdceb; }
+.qcar .qtext { font-size: 17px; min-height: 4.5em; }
+.qcar .qtext blockquote { border: 0; padding: 0; font-style: normal; }
+.qnav { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; }
+.qnav button:not(.qlike) { width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--line); background: #fff; font-size: 22px; color: var(--accent-dark); }
+.qnav .qlike { margin: 0; font-size: 20px; }
+.qday { display: block; color: var(--text); background: linear-gradient(135deg, #f4f8fc, #e9f0f8); }
