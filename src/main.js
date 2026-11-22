@@ -2,7 +2,9 @@ import './style.css';
 import { APP_NAME, WALL_ROOM_NAME, STATIONS } from './config.js';
 import { loadSession, startLogin, finishLogin, getAuthResponse, clearSession, redirectUri } from './auth.js';
 import { startMatrix, joinSpaceRooms, useRecoveryKey, isVerified, logout } from './matrix.js';
-import { unlockAudio, sound, soundOn, setSound, toast, notifyState, askNotify, systemNotify, registerSW, setBadge } from './notify.js';
+import { unlockAudio, sound, soundOn, setSound, toast, notifyState, askNotify, systemNotify, registerSW, setBadge, enablePush } from './notify.js';
+import { PUSH_GATEWAY, VAPID_PUBLIC, DEVICE_NAME } from './config.js';
+const turnOnPush = () => enablePush(client, { gateway: PUSH_GATEWAY, vapidKey: VAPID_PUBLIC, appName: APP_NAME, deviceName: DEVICE_NAME });
 
 const $app = document.getElementById('app');
 let client = null;
@@ -442,7 +444,7 @@ const views = {
       const st = notifyState();
       const ns = document.getElementById('notifstate');
       ns.textContent = {
-        granted: '✅ Уведомления включены. Они приходят, пока «Юрт» открыт или свёрнут недавно.',
+        granted: '✅ Уведомления включены — приходят, даже когда «Юрт» закрыт.',
         denied: 'Уведомления запрещены. Включите: Настройки iPhone → Уведомления → Юрт.',
         unsupported: 'Чтобы включить уведомления, добавьте «Юрт» на экран «Домой» и откройте с иконки.',
         default: 'Звук и плашка сверху работают всегда, пока приложение открыто.',
@@ -528,7 +530,11 @@ const actions = {
     const ev = room?.getLiveTimeline().getEvents().find((e) => e.getId() === el.dataset.id);
     if (ev) client.resendEvent(ev, room).catch(() => {});
   },
-  notify: async () => { await askNotify(); route(); },
+  notify: async () => {
+    await askNotify();
+    try { await turnOnPush(); } catch (e) { alert('Уведомления: ' + e.message); }
+    route();
+  },
   // меню сообщения
   closesheet: () => closeSheet(),
   reply: (el) => {
@@ -879,6 +885,7 @@ async function boot() {
   client.on('Room.timeline', onTimeline);
   client.on('Room.myMembership', onInvite);
   registerSW();
+  turnOnPush().catch((e) => console.warn('push', e)); // обновить подписку при каждом запуске
   client.on('Room.myMembership', () => joinSpaceRooms(client));
   joinSpaceRooms(client);
   layout();

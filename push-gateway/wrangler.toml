@@ -1,0 +1,10 @@
+name = "yurt-push"
+main = "worker.js"
+compatibility_date = "2025-06-01"
+workers_dev = true
+
+[vars]
+# контакт для служб push (Apple/Google требуют) — адрес нашего сайта
+VAPID_SUB = "https://qazaxam.github.io/semya/"
+
+# секрет VAPID_JWK задаётся командой: npx wrangler secret put VAPID_JWK

@@ -61,7 +61,37 @@ export async function systemNotify(title, body, tag) {
 }
 
 export function registerSW() {
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
+  if (!('serviceWorker' in navigator)) return;
+  navigator.serviceWorker.register('./sw.js').catch(() => {});
+  // нажали на уведомление, а приложение уже открыто
+  navigator.serviceWorker.addEventListener('message', (e) => { if (e.data?.open) location.hash = e.data.open; });
+  // открыли приложение — убираем старые уведомления из шторки
+  document.addEventListener('visibilitychange', async () => {
+    if (document.hidden) return;
+    try { (await (await navigator.serviceWorker.ready).getNotifications()).forEach((n) => n.close()); } catch {}
+  });
+}
+
+// Фоновые уведомления: подписка браузера + «пушер» в Matrix, который шлёт события в рассыльщик
+const unb64u = (s) => Uint8Array.from(
+  atob(s.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (s.length % 4)) % 4)), (c) => c.charCodeAt(0));
+export async function enablePush(client, { gateway, vapidKey, appName, deviceName }) {
+  if (notifyState() !== 'granted' || !gateway || !vapidKey || !('PushManager' in window)) return false;
+  const reg = await navigator.serviceWorker.ready;
+  let sub = await reg.pushManager.getSubscription();
+  if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: unb64u(vapidKey) });
+  const j = sub.toJSON();
+  await client.setPusher({
+    kind: 'http',
+    app_id: 'yurt.web',
+    pushkey: j.endpoint,
+    app_display_name: appName,
+    device_display_name: deviceName,
+    lang: 'ru',
+    data: { url: gateway + '/_matrix/push/v1/notify', p256dh: j.keys.p256dh, auth: j.keys.auth },
+    append: false,
+  });
+  return true;
 }
 
 // цифра на значке приложения

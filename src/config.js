@@ -5,6 +5,11 @@ export const SPACE_NAME = 'Семья';   // пространство: его к
 export const WALL_ROOM_NAME = 'Стена';
 export const DEVICE_NAME = 'Юрт — браузер';
 
+// Фоновые уведомления: рассыльщик на Cloudflare (папка push-gateway) и его ОТКРЫТЫЙ ключ.
+// Закрытый ключ хранится только в Cloudflare (секрет VAPID_JWK).
+export const PUSH_GATEWAY = 'https://yurt-push.qazaxam.workers.dev';
+export const VAPID_PUBLIC = 'BEnGgWO7rUsu8afz0qK7Wb0RB7H8TXLm91EB89sJPaIUTQtSB4xBTqUR5BR4txM8YCGKFF3u7hzhyBwePSQJEf4';
+
 // Радио: [название, адрес потока (только https)]
 export const STATIONS = [
   ['Power Türk', 'https://live.powerapp.com.tr/powerturk/abr/playlist.m3u8'],
