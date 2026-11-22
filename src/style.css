@@ -54,6 +54,8 @@ input, textarea { width: 100%; font: inherit; padding: 8px 10px; border: 1px sol
 .menu-open .drawer { transform: none; }
 .menu-open .shade { display: block; }
 
+.ptr { position: fixed; left: 0; right: 0; top: calc(48px + env(safe-area-inset-top)); z-index: 15; height: 0; overflow: hidden;
+  display: flex; align-items: center; justify-content: center; background: var(--bg); color: var(--muted); font-size: 13px; }
 main { max-width: 640px; margin: 0 auto; padding: 8px 8px 72px; }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; margin-bottom: 8px; }
 .card .btn { margin-top: 8px; }

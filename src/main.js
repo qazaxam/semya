@@ -293,11 +293,34 @@ async function checkUpdate() {
     const html = await (await fetch('./?v=' + Date.now(), { cache: 'no-store' })).text();
     const fresh = html.match(/assets\/index-[\w-]+\.js/)?.[0];
     const mine = document.querySelector('script[src*="assets/index-"]')?.getAttribute('src');
-    if (fresh && mine && !mine.includes(fresh)) location.reload();
+    if (fresh && mine && !mine.includes(fresh)) hardReload();
   } catch {}
 }
+// перезагрузка мимо кэша телефона
+function hardReload() { location.replace(location.pathname + '?r=' + Date.now() + location.hash); }
+if (new URLSearchParams(location.search).has('r')) history.replaceState(null, '', location.pathname + location.hash);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) checkUpdate(); });
 checkUpdate();
+
+// ---------- потянуть вниз — обновить ----------
+const ptr = document.createElement('div');
+ptr.className = 'ptr';
+document.body.prepend(ptr);
+let startY = null, pull = 0;
+addEventListener('touchstart', (e) => {
+  startY = scrollY <= 0 && !document.body.classList.contains('menu-open') ? e.touches[0].clientY : null;
+}, { passive: true });
+addEventListener('touchmove', (e) => {
+  if (startY === null) return;
+  pull = Math.max(0, e.touches[0].clientY - startY);
+  ptr.style.height = Math.min(pull / 2, 60) + 'px';
+  ptr.textContent = pull > 120 ? '↻ Отпустите — обновим' : '↓ Потяните, чтобы обновить';
+}, { passive: true });
+addEventListener('touchend', () => {
+  if (pull > 120) { ptr.textContent = 'Обновляем…'; hardReload(); }
+  else ptr.style.height = '0';
+  startY = null; pull = 0;
+});
 
 // ---------- запуск ----------
 async function boot() {
