@@ -1,11 +1,11 @@
 {
-  "name": "Юрт — семейная сеть",
-  "short_name": "Юрт",
+  "name": "Dalga — радио нашего края",
+  "short_name": "Dalga",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#e8edf2",
-  "theme_color": "#4a76a8",
+  "background_color": "#0e0d14",
+  "theme_color": "#0e0d14",
   "lang": "ru",
   "icons": [
     { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
